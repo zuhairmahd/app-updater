@@ -1,0 +1,7 @@
+logs/
+config.json
+*.txt
+*.csv
+*.tmp
+*.log
+
