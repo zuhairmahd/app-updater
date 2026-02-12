@@ -4,7 +4,7 @@ param(
 )
 
 #region helper functions
-function Call-GraphAPI()
+function Invoke-GraphAPI()
 {
     <#
     .SYNOPSIS
@@ -257,7 +257,7 @@ function Call-GraphAPI()
                 {
                     Write-Log -LogFile $logFile -Module $functionName -Message "Processing resource sequentially: $path" -LogLevel "Verbose"
                     # Recursive call with single resource path
-                    $result = CallGraphAPI -accessToken $accessToken -ResourcePath $path -APIVersion $APIVersion `
+                    $result = Invoke-GraphAPI -accessToken $accessToken -ResourcePath $path -APIVersion $APIVersion `
                         -method $method -Filter $Filter -Search $Search -ExtraParameters $ExtraParameters `
                         -body $body -consistencyLevel:$consistencyLevel -secureString:$secureString
                     # Check if result is an error status code (integer) or null
@@ -2130,9 +2130,9 @@ $scriptName = $MyInvocation.MyCommand.Name
 $global:LogFile = Join-Path -Path $PSScriptRoot -ChildPath "logs\$($scriptName)-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 $managedAppUri = "deviceAppManagement/mobileApps"
 $accessToken = Get-GraphAccessToken -tenantId $tenantId -clientId $clientId -clientSecret $clientSecret -certificateThumbprint $certificateThumbprint
-# $autopilotDevices = CallGraphApi -ResourcePath $autoPilotDeviceURI -accessToken $accessToken -extraParameters $autopilotExtraParameters -consistencyLevel -verbose
-# $importedDevices = CallGraphApi -ResourcePath $importedAutopilotDeviceURI -accessToken $accessToken -consistencyLevel -extraParameters $importedAutopilotDeviceExtraParameters -verbose
-# $unmanagedDevices = CallGraphApi -ResourcePath $unmanagedDeviceUri -accessToken $accessToken
+# $autopilotDevices = Invoke-GraphAPI -ResourcePath $autoPilotDeviceURI -accessToken $accessToken -extraParameters $autopilotExtraParameters -consistencyLevel -verbose
+# $importedDevices = Invoke-GraphAPI -ResourcePath $importedAutopilotDeviceURI -accessToken $accessToken -consistencyLevel -extraParameters $importedAutopilotDeviceExtraParameters -verbose
+# $unmanagedDevices = Invoke-GraphAPI -ResourcePath $unmanagedDeviceUri -accessToken $accessToken
 # $global:enrollments = [ordered] @{
 # "autopilot" = $autopilotDevices
 # "managed" = $managedDevices
@@ -2188,7 +2188,7 @@ $appTypes = @(
 #endregion Define variables
 
 write-log -logFile $logFile -startLogging
-$apps = Call-GraphAPI -ResourcePath $managedAppUri -accessToken $AccessToken
+$apps = Invoke-GraphAPI -ResourcePath $managedAppUri -accessToken $AccessToken
 $appArray = @()
 foreach ($app in $apps.value)
 {
@@ -2260,10 +2260,10 @@ $bodyJson = $params | ConvertTo-Json -Depth 10
 
 # Make API call with JSON body
 Write-Host "Updating app icon..." -ForegroundColor Cyan
-$APIResponse = Call-GraphAPI -ResourcePath "$managedAppUri/$($selectedApp.id)" -accessToken $AccessToken -Method PATCH -body $bodyJson
+$APIResponse = Invoke-GraphAPI -ResourcePath "$managedAppUri/$($selectedApp.id)" -accessToken $AccessToken -Method PATCH -body $bodyJson
 
 # Check for successful response
-# Call-GraphAPI returns PSCustomObject on success, integer status code on error
+# Invoke-GraphAPI returns PSCustomObject on success, integer status code on error
 if ($APIResponse -is [PSCustomObject])
 {
     Write-Host "Successfully updated the app's large icon." -ForegroundColor Green
