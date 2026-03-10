@@ -2130,14 +2130,6 @@ $scriptName = $MyInvocation.MyCommand.Name
 $global:LogFile = Join-Path -Path $PSScriptRoot -ChildPath "logs\$($scriptName)-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 $managedAppUri = "deviceAppManagement/mobileApps"
 $accessToken = Get-GraphAccessToken -tenantId $tenantId -clientId $clientId -clientSecret $clientSecret -certificateThumbprint $certificateThumbprint
-# $autopilotDevices = Invoke-GraphAPI -ResourcePath $autoPilotDeviceURI -accessToken $accessToken -extraParameters $autopilotExtraParameters -consistencyLevel -verbose
-# $importedDevices = Invoke-GraphAPI -ResourcePath $importedAutopilotDeviceURI -accessToken $accessToken -consistencyLevel -extraParameters $importedAutopilotDeviceExtraParameters -verbose
-# $unmanagedDevices = Invoke-GraphAPI -ResourcePath $unmanagedDeviceUri -accessToken $accessToken
-# $global:enrollments = [ordered] @{
-# "autopilot" = $autopilotDevices
-# "managed" = $managedDevices
-# "imported"  = $importedDevices
-# "unmanaged" = $unmanagedDevices
 $appTypes = @(
     @{
         AppType     = "Win32 App"
