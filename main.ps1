@@ -1,76 +1,14 @@
 [CmdletBinding()]
 param(
-    [string]$configFile = 'config.json'
+    [string]$configFile = 'config.json',
+    [string]$Applist = 'applist.csv'
 )
 
 #region helper functions
 function Invoke-GraphAPI()
 {
-    <#
-    .SYNOPSIS
-    Executes HTTP requests to Microsoft Graph API with comprehensive error handling and pagination.
-
-    .DESCRIPTION
-    This function is the core Graph API client that handles all HTTP requests to Microsoft Graph endpoints.
-    It supports both single and batch resource path processing, automatic pagination for large result sets,
-    OData query parameters (filter, search, select), various HTTP methods (GET, POST, PATCH, DELETE),
-    consistency level headers for advanced queries, and comprehensive error handling with retry logic.
-
-    .PARAMETER accessToken
-    The Microsoft Graph API access token for authentication. This parameter is mandatory.
-
-    .PARAMETER ResourcePath
-    The Graph API resource path or array of paths. Supports single string or string array for batch processing.
-    This parameter is mandatory.
-
-    .PARAMETER APIVersion
-    The Graph API version to use. Default is 'beta'. Can be 'v1.0' or 'beta'.
-
-    .PARAMETER method
-    The HTTP method: 'get' (default), 'post', 'patch', 'put', or 'delete'.
-
-    .PARAMETER Filter
-    OData $filter query parameter for filtering results.
-
-    .PARAMETER Search
-    OData $search query parameter for searching. Requires consistencyLevel.
-
-    .PARAMETER ExtraParameters
-    Additional OData query parameters (e.g., "$select=id,displayName&$top=10").
-
-    .PARAMETER headers
-    Custom HTTP headers hashtable to include in the request.
-
-    .PARAMETER body
-    Request body for POST/PATCH/PUT operations (JSON string).
-
-    .PARAMETER consistencyLevel
-    When specified, adds ConsistencyLevel=eventual header (required for $search and some $count operations).
-
-    .PARAMETER secureString
-    When specified, returns access token as SecureString instead of plain text.
-
-    .OUTPUTS
-    System.Management.Automation.PSCustomObject or System.Array
-    Returns the API response value property (single object or array), or complete response object.
-    For batch processing, returns array of results. Returns $null on error.
-
-    .EXAMPLE
-    $users = CallGraphAPI -accessToken $token -ResourcePath "users" -Filter "startswith(displayName,'John')"
-    $device = CallGraphAPI -accessToken $token -ResourcePath "deviceManagement/managedDevices/abc123"
-    $result = CallGraphAPI -accessToken $token -ResourcePath "devices" -method "post" -body $jsonBody
-
-    .NOTES
-    Handles automatic pagination via @odata.nextLink for large result sets.
-    Supports batch resource path processing for multiple endpoints.
-    Includes retry logic with exponential backoff for transient errors.
-    Processes OData filter conditions via ProcessFilterCondition function.
-    Comprehensive error logging and verbose output for debugging.
-    Compatible with PowerShell 5.1.
-    #>
     [CmdletBinding()]
-    param
-    (
+    param(
         [Parameter(Mandatory = $true)]
         [string]$accessToken,
         [Parameter(Mandatory = $true)]
@@ -83,7 +21,7 @@ function Invoke-GraphAPI()
         [string]$Search = $null,
         [string]$ExtraParameters = $null,
         $headers,
-        [string]$body = $null,
+        $body = $null,
         [switch]$consistencyLevel,
         [switch]$secureString
     )
@@ -92,33 +30,20 @@ function Invoke-GraphAPI()
     $functionName = $MyInvocation.MyCommand.Name
     if ($accessToken)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Access token provided." -LogLevel "Information"
         Write-Verbose "[$functionName] Access token provided."
     }
     else
     {
         Write-Verbose "[$functionName] Access token not provided. Please provide a valid access token."
-        Write-Log -LogFile $logFile -Module $functionName -Message "Access token not provided." -LogLevel "Error"
         return
     }
-    Write-Log -LogFile $logFile -Module $functionName -Message "Resource Path: $ResourcePath" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Method: $method" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Filter: $filter" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Search: $Search" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Extra Parameters: $ExtraParameters" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Version: $APIVersion" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Consistency Level: $consistencyLevel" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Body: $body" -LogLevel "Information"
-    Write-Log -LogFile $logFile -Module $functionName -Message "SecureString: $secureString" -LogLevel "Information"
 
     # Check if ResourcePath is an array
     $isArrayInput = $ResourcePath -is [array]
     Write-Verbose "[$functionName] isArrayInput: $isArrayInput"
-    Write-Log -logFile $logFile -Module $functionName -Message "Function called with ResourcePath type: $($ResourcePath.GetType().FullName)" -LogLevel "Information"
     # Handle single-item array
     if ($isArrayInput -and $ResourcePath.Count -eq 1)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Single-item array detected, processing as single request" -LogLevel "Verbose"
         Write-Verbose "[$functionName] Single-item array detected, processing as single request"
         $ResourcePath = $ResourcePath[0]
         $isArrayInput = $false
@@ -127,10 +52,8 @@ function Invoke-GraphAPI()
     $isBatchRequest = $isArrayInput -and $ResourcePath.Count -gt 1
     $batchThreshold = 1
     Write-Verbose "[$functionName] isBatchRequest: $isBatchRequest with a threshold of $batchThreshold"
-    Write-Log -logFile $logFile -Module $functionName -Message "isBatchRequest: $isBatchRequest with a threshold of $batchThreshold" -LogLevel "Information"
     if ($isBatchRequest -and $ResourcePath.Count -ge $batchThreshold)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Batch request detected: $($ResourcePath.Count) resources" -LogLevel "Information"
         Write-Verbose "[$functionName] Batch request detected: $($ResourcePath.Count) resources"
         # Attempt to use native Graph API $batch endpoint
         # Graph API supports up to 20 requests per batch
@@ -145,7 +68,6 @@ function Invoke-GraphAPI()
             $batchSize = [Math]::Min($maxBatchSize, $ResourcePath.Count - $i)
             $batches += , @($ResourcePath[$i..($i + $batchSize - 1)])
         }
-        Write-Log -LogFile $logFile -Module $functionName -Message "Processing $($ResourcePath.Count) requests in $($batches.Count) batch(es)" -LogLevel "Information"
         Write-Verbose "[$functionName] Processing $($ResourcePath.Count) requests in $($batches.Count) batch(es)"
         $batchIndex = 0
         foreach ($batch in $batches)
@@ -191,7 +113,24 @@ function Invoke-GraphAPI()
                 # Add body if provided
                 if ($body)
                 {
-                    $batchRequest['body'] = $body | ConvertFrom-Json
+                    # Support per-request bodies: if $body is an array, pick the body for this specific request
+                    $globalPathIndex = ($batchIndex * $maxBatchSize) + ($requestId - 1)
+                    $requestBody = if ($body -is [array])
+                    {
+                        if ($globalPathIndex -lt $body.Count)
+                        {
+                            $body[$globalPathIndex] 
+                        }
+                        else
+                        {
+                            $body[0] 
+                        }
+                    }
+                    else
+                    {
+                        $body
+                    }
+                    $batchRequest['body'] = $requestBody | ConvertFrom-Json
                     if (-not $batchRequest.ContainsKey('headers'))
                     {
                         $batchRequest['headers'] = @{}
@@ -205,7 +144,6 @@ function Invoke-GraphAPI()
             $batchBody = @{
                 requests = $batchRequests
             } | ConvertTo-Json -Depth 10
-            Write-Log -LogFile $logFile -Module $functionName -Message "Sending batch with $($batchRequests.Count) requests to `$batch endpoint" -LogLevel "Verbose"
             # Send batch request to Graph API
             try
             {
@@ -229,7 +167,6 @@ function Invoke-GraphAPI()
                         # Preserve the entire response object so downstream code can match by id
                         $allResults += $response
                         $successCount++
-                        Write-Log -LogFile $logFile -Module $functionName -Message "Batch request $($response.id) succeeded (status: $($response.status))" -LogLevel "Verbose"
                     }
                     else
                     {
@@ -244,27 +181,43 @@ function Invoke-GraphAPI()
                         {
                             "Unknown error"
                         }
-                        Write-Log -LogFile $logFile -Module $functionName -Message "Batch request $($response.id) failed (status: $($response.status)): $errorMsg" -LogLevel "Warning"
+                        Write-Verbose "[$functionName] Batch request ID $($response.id) failed with status $($response.status): $errorMsg"
                     }
                 }
                 $batchIndex++
             }
             catch
             {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Batch endpoint failed: $($_.Exception.Message). Falling back to sequential processing." -LogLevel "Warning"
                 # Final fallback: process each resource path individually
+                $batchPathIndex = 0
                 foreach ($path in $batch)
                 {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Processing resource sequentially: $path" -LogLevel "Verbose"
+                    # Calculate the global index for this path to select the correct per-request body
+                    $globalPathIndex = ($batchIndex * $maxBatchSize) + $batchPathIndex
+                    $batchPathIndex++
+                    $singleBody = if ($body -is [array])
+                    {
+                        if ($globalPathIndex -lt $body.Count)
+                        {
+                            $body[$globalPathIndex] 
+                        }
+                        else
+                        {
+                            $null 
+                        }
+                    }
+                    else
+                    {
+                        $body
+                    }
                     # Recursive call with single resource path
                     $result = Invoke-GraphAPI -accessToken $accessToken -ResourcePath $path -APIVersion $APIVersion `
                         -method $method -Filter $Filter -Search $Search -ExtraParameters $ExtraParameters `
-                        -body $body -consistencyLevel:$consistencyLevel -secureString:$secureString
+                        -body $singleBody -consistencyLevel:$consistencyLevel -secureString:$secureString
                     # Check if result is an error status code (integer) or null
                     if ($null -eq $result -or $result -is [int])
                     {
                         $failureCount++
-                        Write-Log -LogFile $logFile -Module $functionName -Message "Failed to process resource: $path (Status: $result)" -LogLevel "Warning"
                     }
                     else
                     {
@@ -274,7 +227,6 @@ function Invoke-GraphAPI()
                 }
             }
         }
-        Write-Log -LogFile $logFile -Module $functionName -Message "Batch processing completed: $successCount successful, $failureCount failed" -LogLevel "Information"
         Write-Verbose "[$functionName] Batch processing completed: $successCount successful, $failureCount failed"
         # Return combined results
         return @{
@@ -297,15 +249,12 @@ function Invoke-GraphAPI()
     # Single request processing (original behavior continues below)
     $uri = "https://graph.microsoft.com/$APIVersion/$ResourcePath"
     $statusCode = $null
-    Write-Log -LogFile $logFile -Module $functionName -Message "Uri: $uri" -LogLevel "Information"
     Write-Verbose "[$functionName] Uri: $uri"
     #endregion
 
     #region Encode filter and add headers
     if ($Filter)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Processing filter string: $Filter" -LogLevel "Verbose"
-        Write-Log -LogFile $logFile -Module $functionName -Message "Splitting filter by logical operators while preserving operators." -LogLevel "Information"
         Write-Verbose "[$functionName] Splitting filter by logical operators while preserving operators."
         $filterParts = [System.Collections.ArrayList]::new()
         $logicalOperators = [System.Collections.ArrayList]::new()
@@ -314,71 +263,55 @@ function Invoke-GraphAPI()
         $lastIndex = 0
         # Find all logical operators and their positions
         $logicalOperaterMatches = [regex]::Matches($Filter, $pattern)
-        Write-Log -LogFile $logFile -Module $functionName -Message "Found $($logicalOperaterMatches.Count) logical operators." -LogLevel "Verbose"
         Write-Verbose "[$functionName] Found $($logicalOperaterMatches.Count) logical operators."
         # If no logical operators, process as a single condition
         if ($logicalOperaterMatches.Count -eq 0)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "No logical operators found. Processing as a single filter condition." -LogLevel "Verbose"
             Write-Verbose "[$functionName] No logical operators found. Processing as a single filter condition."
             $processedFilter = ProcessFilterCondition -condition $Filter
-            Write-Log -LogFile $logFile -Module $functionName -Message "Processed single filter condition: $processedFilter" -LogLevel "Information"
             Write-Verbose "[$functionName] Processed single filter condition: $processedFilter"
             $encodedFilter = $processedFilter
-            Write-Log -LogFile $logFile -Module $functionName -Message "Encoded filter: $encodedFilter" -LogLevel "Information"
             Write-Verbose "[$functionName] Encoded filter: $encodedFilter"
         }
         else
         {
             # Process each part of the filter
-            Write-Log -LogFile $logFile -Module $functionName -Message "Logical operators found. Processing filter as multiple conditions." -LogLevel "Verbose"
             Write-Verbose "[$functionName] Logical operators found. Processing filter as multiple conditions."
             foreach ($logicalOperatorMatch in $logicalOperaterMatches)
             {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Processing filter condition before logical operator: $($Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex))" -LogLevel "Debug"
                 Write-Verbose "[$functionName] Processing filter condition before logical operator: $($Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex))"
                 $condition = $Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex)
-                Write-Log -LogFile $logFile -Module $functionName -Message "Condition to process: $condition" -LogLevel "Information"
                 Write-Verbose "[$functionName] Condition to process: $condition"
                 [void]$filterParts.Add((ProcessFilterCondition -condition $condition))
-                Write-Log -LogFile $logFile -Module $functionName -Message "Processed filter condition: $($filterParts[$filterParts.Count - 1])" -LogLevel "Information"
                 Write-Verbose "[$functionName] Processed filter condition: $($filterParts[$filterParts.Count - 1])"
                 # Store the logical operator (and, or)
                 [void]$logicalOperators.Add($logicalOperatorMatch.Value.Trim())
                 $lastIndex = $logicalOperatorMatch.Index + $logicalOperatorMatch.Length
-                Write-Log -LogFile $logFile -Module $functionName -Message "Logical operators so far: $($logicalOperators -join ', ')" -LogLevel "Information"
                 Write-Verbose "[$functionName] Logical operators so far: $($logicalOperators -join ', ')"
             }
             # Don't forget the last part after the last logical operator
             if ($lastIndex -lt $Filter.Length)
             {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Processing filter condition after the last logical operator." -LogLevel "Verbose"
                 Write-Verbose "[$functionName] Processing filter condition after the last logical operator."
                 $condition = $Filter.Substring($lastIndex)
                 [void]$filterParts.Add((ProcessFilterCondition -condition $condition))
-                Write-Log -LogFile $logFile -Module $functionName -Message "Processed filter condition: $($filterParts[$filterParts.Count - 1])" -LogLevel "Information"
                 Write-Verbose "[$functionName] Processed filter condition: $($filterParts[$filterParts.Count - 1])"
             }
             # Rebuild the filter string with processed parts and original logical operators
-            Write-Log -LogFile $logFile -Module $functionName -Message "Rebuilding the filter string with processed parts and logical operators." -LogLevel "Information"
             Write-Verbose "[$functionName] Rebuilding the filter string with processed parts and logical operators."
             $encodedFilter = $filterParts[0]
             for ($i = 0; $i -lt $logicalOperators.Count; $i++)
             {
                 $encodedFilter += " $($logicalOperators[$i]) $($filterParts[$i+1])"
-                Write-Log -LogFile $logFile -Module $functionName -Message "Adding logical operator: $($logicalOperators[$i])" -LogLevel "Information"
                 Write-Verbose "[$functionName] Adding logical operator: $($logicalOperators[$i])"
             }
-            Write-Log -LogFile $logFile -Module $functionName -Message "Processed complex filter: $encodedFilter" -LogLevel "Information"
             Write-Verbose "[$functionName] Processed complex filter: $encodedFilter"
         }
         $encodedUri = "$uri`?`$filter=$([uri]::EscapeUriString($encodedFilter))"
-        Write-Log -LogFile $logFile -Module $functionName -Message "Uri after applying filters: $encodedUri" -LogLevel "Information"
         Write-Verbose "[$functionName] Uri after applying filters: $encodedUri"
     }
     else
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "No filter provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No filter provided."
         $encodedUri = $uri
     }
@@ -386,11 +319,9 @@ function Invoke-GraphAPI()
     # Handle search parameter
     if ($Search)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Processing search parameter: $Search" -LogLevel "Verbose"
         Write-Verbose "[$functionName] Processing search parameter: $Search"
         # URL encode the search string
         $encodedSearch = [uri]::EscapeUriString($Search)
-        Write-Log -LogFile $logFile -Module $functionName -Message "Encoded search: $encodedSearch" -LogLevel "Information"
         Write-Verbose "[$functionName] Encoded search: $encodedSearch"
         # Add search parameter to URI
         if ($encodedUri.Contains("?"))
@@ -401,29 +332,23 @@ function Invoke-GraphAPI()
         {
             $encodedUri = "$encodedUri`?`$search=$encodedSearch"
         }
-        Write-Log -LogFile $logFile -Module $functionName -Message "Uri after applying search: $encodedUri" -LogLevel "Information"
         Write-Verbose "[$functionName] Uri after applying search: $encodedUri"
     }
     else
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "No search parameter provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No search parameter provided."
     }
 
     if ($extraParameters)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Extra parameters provided." -LogLevel "Information"
-        Write-Log -LogFile $logFile -Module $functionName -Message "Splitting the extra parameters by ampersand to get individual key-value pairs." -LogLevel "Information"
         Write-Verbose "[$functionName] Extra parameters provided."
         # Initialize the parameter list
         $paramsList = @()
         # Split by ampersand to get individual key-value pairs
         $keyValuePairs = $extraParameters -split '&'
-        Write-Log -LogFile $logFile -Module $functionName -Message "Found $($keyValuePairs.Count) key-value pairs." -LogLevel "Verbose"
         Write-Verbose "[$functionName] Found $($keyValuePairs.Count) key-value pairs."
         foreach ($pair in $keyValuePairs)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Processing key-value pair: $pair" -LogLevel "Verbose"
             Write-Verbose "[$functionName] Processing key-value pair: $pair"
             # Split each pair by equals sign to separate key and value
             $keyAndValue = $pair -split '=', 2
@@ -431,13 +356,10 @@ function Invoke-GraphAPI()
             {
                 $key = $keyAndValue[0].Trim()
                 $value = $keyAndValue[1].Trim()
-                Write-Log -LogFile $logFile -Module $functionName -Message "Key: $key" -LogLevel "Information"
-                Write-Log -LogFile $logFile -Module $functionName -Message "Value: $value" -LogLevel "Information"
                 Write-Verbose "[$functionName] Key: $key"
                 Write-Verbose "[$functionName] Value: $value"
                 # Add the $ prefix to the key for OData parameters
                 $formattedKey = "`$$key"
-                Write-Log -LogFile $logFile -Module $functionName -Message "Formatted Key with $ prefix: $formattedKey" -LogLevel "Information"
                 Write-Verbose "[$functionName] Formatted Key with $ prefix: $formattedKey"
                 # Add the formatted parameter to the list
                 $paramsList += "$formattedKey=$value"
@@ -445,39 +367,32 @@ function Invoke-GraphAPI()
             else
             {
                 Write-Warning "Invalid parameter format: $pair - skipping"
-                Write-Log -LogFile $logFile -Module $functionName -Message "Invalid parameter format: $pair - skipping" -LogLevel "Warning"
             }
         }
-        Write-Log -LogFile $logFile -Module $functionName -Message "Final parameter list:" -LogLevel "Information"
         Write-Verbose "[$functionName] Final parameter list:"
         $paramsList | ForEach-Object { Write-Verbose "[$functionName] $_" }
         # Join the parameters with & to create a complete query string
         $queryString = $paramsList -join '&'
-        Write-Log -LogFile $logFile -Module $functionName -Message "Final query string: $queryString" -LogLevel "Information"
         Write-Verbose "[$functionName] Final query string: $queryString"
         # Append the extra parameters to the URI
         if ($filter -or $Search)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Adding extra parameters to the uri along with existing parameters." -LogLevel "Information"
             Write-Verbose "[$functionName] Adding extra parameters to the uri along with existing parameters."
             $encodedUri = "$encodedUri`&$queryString"
         }
         else
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "No filter or search provided. Adding extra parameters to the uri." -LogLevel "Information"
             Write-Verbose "[$functionName] No filter or search provided. Adding extra parameters to the uri."
             $encodedUri = "$encodedUri`?$queryString"
         }
     }
     else
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "No extra parameters provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No extra parameters provided."
     }
     # Build default headers with Authorization and Content-Type
     if ($consistencyLevel)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Adding consistency level to the headers." -LogLevel "Information"
         Write-Verbose "[$functionName] Adding consistency level to the headers."
         $defaultHeaders = @{
             Authorization    = "Bearer $accessToken"
@@ -487,7 +402,6 @@ function Invoke-GraphAPI()
     }
     else
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "No consistency level provided." -LogLevel "Information"
         Write-Verbose "[$functionName] No consistency level provided."
         $defaultHeaders = @{
             Authorization  = "Bearer $accessToken"
@@ -498,12 +412,10 @@ function Invoke-GraphAPI()
     # Merge custom headers if provided (custom headers take precedence)
     if ($headers)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Custom headers provided. Merging with default headers." -LogLevel "Information"
         Write-Verbose "[$functionName] Custom headers provided. Merging with default headers."
         foreach ($key in $headers.Keys)
         {
             $defaultHeaders[$key] = $headers[$key]
-            Write-Log -LogFile $logFile -Module $functionName -Message "Added/Overridden header: $key" -LogLevel "Information"
             Write-Verbose "[$functionName] Added/Overridden header: $key"
         }
     }
@@ -511,7 +423,6 @@ function Invoke-GraphAPI()
 
     #region prepare the call
     # Create parameter hashtable for splatting
-    Write-Log -LogFile $logFile -Module $functionName -Message "Preparing parameters for Invoke-RestMethod call." -LogLevel "Information"
     Write-Verbose "[$functionName] Preparing parameters for Invoke-RestMethod call."
     $restParams = @{
         Method          = $method
@@ -522,41 +433,32 @@ function Invoke-GraphAPI()
     #add headers parameter if it was passed
     if ($headers)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Headers provided. Adding to the request." -LogLevel "Information"
         Write-Verbose "[$functionName] Headers provided. Adding to the request."
         $restParams['Headers'] = $headers
     }
     # Only add Body parameter if it exists
     if ($body)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "Body parameter provided. Adding to the request." -LogLevel "Information"
         Write-Verbose "[$functionName] Body parameter provided. Adding to the request."
         $restParams['Body'] = $body
     }
     #Add statusCodeVariable if we are running under powershell  7.0 or higher
     if ($PSVersionTable.PSVersion.Major -ge 7)
     {
-        Write-Log -LogFile $logFile -Module $functionName -Message "PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request." -LogLevel "Debug"
         Write-Verbose "[$functionName] PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request."
         $restParams['StatusCodeVariable'] = 'statusCode'
     }
-    Write-Log -LogFile $logFile -Module $functionName -Message "Making the following call to Microsoft Graph:" -LogLevel "Information"
     Write-Verbose "[$functionName] Making the following call to Microsoft Graph:"
-    Write-Log -LogFile $logFile -Module $functionName -Message "URI: $encodedUri." -LogLevel "Information"
     Write-Verbose "[$functionName] URI: $encodedUri"
-    Write-Log -LogFile $logFile -Module $functionName -Message "Method: $method." -LogLevel "Information"
     Write-Verbose "[$functionName] Method: $method"
     #endregion
     try
     {
         $response = Invoke-RestMethod @restParams
-        Write-Log -LogFile $logFile -Module $functionName -Message "NextLink: $($response.'@odata.nextLink')" -LogLevel "Information"
         Write-Verbose "[$functionName] NextLink: $($response.'@odata.nextLink')"
-        Write-Log -LogFile $logFile -Module $functionName -Message "Response count: $($response.value.count)" -LogLevel "Information"
         Write-Verbose "[$functionName] Response count: $($response.value.count)"
         if ($response.'@odata.nextLink')
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "NextLink found. Fetching additional pages." -LogLevel "Verbose"
             Write-Verbose "[$functionName] NextLink found. Fetching additional pages."
             # Initialize an array to hold all items
             $allItems = @()
@@ -565,11 +467,9 @@ function Invoke-GraphAPI()
             while ($nextLink)
             {
                 $nextGroup = Invoke-RestMethod -Method $method -Uri $nextLink -Headers $defaultHeaders -UseBasicParsing
-                Write-Log -LogFile $logFile -Module $functionName -Message "Fetched next page with $($nextGroup.value.Count) items." -LogLevel "Information"
                 Write-Verbose "[$functionName] Fetched next page with $($nextGroup.value.Count) items."
                 if ($nextGroup.value)
                 {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Adding items from next page to the collection." -LogLevel "Information"
                     Write-Verbose "[$functionName] Adding items from next page to the collection."
                     $allItems += $nextGroup.value
                 }
@@ -577,43 +477,37 @@ function Invoke-GraphAPI()
             }
             # Optionally, reconstruct a response object if needed
             $response.value = $allItems
-            Write-Log -LogFile $logFile -Module $functionName -Message "All items collected. Total count: $($Response.value.Count)" -LogLevel "Information"
             Write-Verbose "[$functionName] All items collected. Total count: $($Response.value.Count)"
         }
         else
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "No nextLink found. Single page response received." -LogLevel "Verbose"
             Write-Verbose "[$functionName] No nextLink found. Single page response received."
         }
-        Write-Log -LogFile $logFile -Module $functionName -Message "The call was successful." -LogLevel "Information"
         Write-Verbose "[$functionName] The call was successful."
         if ($response.count)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Number of objects returned: $($response.count)." -LogLevel "Information"
+            Write-Verbose "[$functionName] Total count of items: $($response.count)."
         }
         if ($response.value.Count)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Number of items returned: $($response.value.Count)." -LogLevel "Information"
             Write-Verbose "[$functionName] Number of items returned: $($response.value.Count)."
         }
         if ($PSVersionTable.PSVersion.Major -ge 7)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code: $statusCode" -LogLevel "Information"
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code message: $statusCodeMessage" -LogLevel "Information"
             Write-Verbose "[$functionName] Status code: $statusCode"
         }
     }
     catch
     {
         # Capture as much diagnostic information as possible about the failure
-        Write-Log -LogFile $logFile -Module $functionName -Message "Exception type: $($PSItem.Exception.GetType().FullName)" -LogLevel "Error"
-        Write-Log -LogFile $logFile -Module $functionName -Message "Exception message: $($PSItem.Exception.Message)" -LogLevel "Error"
+        Write-Verbose "[$functionName] An error occurred while calling the Graph API. Capturing diagnostics."
+        Write-Verbose "[$functionName] Exception type: $($PSItem.Exception.GetType().FullName)"
         # Walk inner exceptions (if any)
         $inner = $PSItem.Exception.InnerException
         while ($null -ne $inner)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "InnerException type: $($inner.GetType().FullName)" -LogLevel "Error"
-            Write-Log -LogFile $logFile -Module $functionName -Message "InnerException message: $($inner.Message)" -LogLevel "Error"
+            Write-Verbose "[$functionName] InnerException type: $($inner.GetType().FullName)"
+            Write-Verbose "[$functionName] InnerException message: $($inner.Message)"
             $inner = $inner.InnerException
         }
         # Defaults
@@ -625,9 +519,9 @@ function Invoke-GraphAPI()
         {
             # Fallback: try to parse from exception message
             $statusCode = [regex]::Match($PSItem.Exception.Message, '\d+').Value
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code (parsed): $statusCode" -LogLevel "Error"
+            Write-Verbose "[$functionName] Status code (parsed): $statusCode"
             $statusCodeMessage = $PSItem.Exception | Out-String
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code message: $statusCodeMessage" -LogLevel "Error"
+            Write-Verbose "[$functionName] Status code message: $statusCodeMessage"
         }
         else
         {
@@ -641,7 +535,7 @@ function Invoke-GraphAPI()
                 $statusCode = [int]$PSItem.Exception.statuscode
             }
             $statusCodeMessage = $PSItem.Exception.statuscode
-            Write-Log -LogFile $logFile -Module $functionName -Message "Status code (from exception): $statusCode" -LogLevel "Error"
+            Write-Verbose "[$functionName] Status code (from exception): $statusCode"
         }
 
         # Attempt to extract response details (headers/body) across PS versions
@@ -727,7 +621,7 @@ function Invoke-GraphAPI()
             }
             catch
             {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Failed to read response stream: $($_.Exception.Message)" -LogLevel "Warning"
+                Write-Verbose "[$functionName] Failed to read response stream: $($_.Exception.Message)"
             }
         }
         # Additional fallbacks commonly present in PS7
@@ -742,7 +636,7 @@ function Invoke-GraphAPI()
             }
             catch
             {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve ErrorDetails: $($_.Exception.Message)" -LogLevel "Warning"
+                Write-Verbose "[$functionName] Failed to retrieve error details message: $($_.Exception.Message)"
             }
         }
         if (-not $responseBodyRaw)
@@ -756,15 +650,15 @@ function Invoke-GraphAPI()
             }
             catch
             {
-                Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve response content: $($_.Exception.Message)" -LogLevel "Warning"
+                Write-Verbose "[$functionName] Failed to retrieve response content: $($_.Exception.Message)"
             }
         }
 
         # Parse JSON body if it looks like JSON
         if ($responseBodyRaw)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Raw server response captured (truncated for display if large)." -LogLevel "Information"
-            Write-Log -LogFile $logFile -Module $functionName -Message "Server Response (raw): $responseBodyRaw" -LogLevel "Error"
+            Write-Verbose "[$functionName] Raw server response captured (truncated for display if large)."
+            Write-Verbose "[$functionName] Server Response (raw): $responseBodyRaw"
             try
             {
                 $responseJson = $responseBodyRaw | ConvertFrom-Json -ErrorAction Stop
@@ -780,8 +674,8 @@ function Invoke-GraphAPI()
             $graphError = $responseJson.error
             $graphCode = $graphError.code
             $graphMessage = $graphError.message
-            Write-Log -LogFile $logFile -Module $functionName -Message "Graph error code: $graphCode" -LogLevel "Information"
-            Write-Log -LogFile $logFile -Module $functionName -Message "Graph error message: $graphMessage" -LogLevel "Information"
+            Write-Verbose "[$functionName] Graph error code: $graphCode"
+            Write-Verbose "[$functionName] Graph error message: $graphMessage"
             if ($graphError.innerError)
             {
                 $innerErr = $graphError.innerError
@@ -795,7 +689,7 @@ function Invoke-GraphAPI()
                 }
                 catch
                 {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error request-id: $($_.Exception.Message)" -LogLevel "Warning"
+                    Write-Verbose "[$functionName] Failed to retrieve inner error request-id: $($_.Exception.Message)"
                 }
                 try
                 {
@@ -806,7 +700,7 @@ function Invoke-GraphAPI()
                 }
                 catch
                 {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error client-request-id: $($_.Exception.Message)" -LogLevel "Warning"
+                    Write-Verbose "[$functionName] Failed to retrieve inner error client-request-id: $($_.Exception.Message)"
                 }
                 try
                 {
@@ -817,13 +711,13 @@ function Invoke-GraphAPI()
                 }
                 catch
                 {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Failed to retrieve inner error date: $($_.Exception.Message)" -LogLevel "Warning"
+                    Write-Verbose "[$functionName] Failed to retrieve inner error date: $($_.Exception.Message)"
                 }
-                Write-Log -LogFile $logFile -Module $functionName -Message "Graph innerError: request-id=$requestId client-request-id=$clientRequestId date=$serverDate" -LogLevel "Information"
+                Write-Verbose "[$functionName] Graph innerError: request-id=$requestId client-request-id=$clientRequestId date=$serverDate"
                 # Some APIs include nested innererror with additional code/message
                 if ($innerErr.innererror)
                 {
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Graph nested innererror: $($innerErr.innererror | ConvertTo-Json -Depth 5)" -LogLevel "Information"
+                    Write-Verbose "[$functionName] Graph nested innererror: $($innerErr.innererror | ConvertTo-Json -Depth 5)"
                 }
             }
         }
@@ -837,31 +731,29 @@ function Invoke-GraphAPI()
                 if ($k -ne 'Authorization')
                 {
                     Write-Verbose "[$functionName]   $($k): $($responseHeaders[$k])"
-                    Write-Log -LogFile $logFile -Module $functionName -Message "Response header: $($k): $($responseHeaders[$k])" -LogLevel "Information"
                 }
             }
         }
         if ($requestId)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Request-Id: $requestId" -LogLevel "Information"
+            Write-Verbose "[$functionName] Request-Id: $requestId"
         }
         if ($clientRequestId)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Client-Request-Id: $clientRequestId" -LogLevel "Information"
+            Write-Verbose "[$functionName] Client-Request-Id: $clientRequestId"
         }
         if ($diagHeader)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "x-ms-ags-diagnostic: $diagHeader" -LogLevel "Information"
+            Write-Verbose "[$functionName] x-ms-ags-diagnostic: $diagHeader"
         }
         if ($serverDate)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Server Date: $serverDate" -LogLevel "Information"
+            Write-Verbose "[$functionName] Server Date: $serverDate"
         }
         if ($retryAfter)
         {
-            Write-Log -LogFile $logFile -Module $functionName -Message "Retry-After: $retryAfter" -LogLevel "Information"
+            Write-Verbose "[$functionName] Retry-After: $retryAfter"
         }
-        # Persist diagnostics to disk via Write-Log (if available)
         try
         {
             # Build a consolidated diagnostic message
@@ -912,14 +804,11 @@ ResponseBody:
 $rawBodyForLog
 "@
 
-            Write-Log -Message $logMessage -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-            # Fallback verbose logging to ensure we don't lose diagnostics
             Write-Verbose "[$functionName] (fallback) $logMessage"
         }
         catch
         {
-            Write-Verbose "[$functionName] Failed to write diagnostics via Write-Log: $($_.Exception.Message)"
-            Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
+            Write-Verbose "[$functionName] Failed to write diagnostics: $($_.Exception.Message)"
         }
 
         # Preserve existing switch logic for user-friendly messages
@@ -928,54 +817,48 @@ $rawBodyForLog
         {
             400
             {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Bad request. Please check the resource name."
             }
             401
             {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Unauthorized. Please check your access token."
             }
             403
             {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Forbidden. You do not have permission to access this resource."
             }
             404
             {
-                Write-Log -Message "Status code: $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Not found. The resource does not exist."
             }
             default
             {
                 Write-Verbose "[$functionName] An unknown error occurred. Please check the error message below."
-                Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 Write-Verbose "[$functionName] Error: $statusMessage"
-                Write-Log -Message "(fallback) $logMessage" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
                 if ($statusCode)
                 {
-                    Write-Log -Message "The status code is $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                    Write-Verbose "[$functionName] Status code: $statusCode"
                 }
                 if ($statusDescription)
                 {
-                    Write-Log -Message "Status description: $statusDescription" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                    Write-Verbose "[$functionName] Status description: $statusDescription"
                 }
                 if ($statusCodeMessage)
                 {
-                    Write-Log -Message "$statusCode indicates $statusCodeMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                    Write-Verbose "[$functionName] $statusCode indicates $statusCodeMessage"
                 }
-                Write-Log -Message "Status message: $statusMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                Write-Verbose "[$functionName] Status message: $statusMessage"
                 if ($requestId)
                 {
-                    Write-Log -Message "Request-Id: $requestId" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                    Write-Verbose "[$functionName] Request-Id: $requestId"
                 }
                 if ($clientRequestId)
                 {
-                    Write-Log -Message "Client-Request-Id: $clientRequestId" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                    Write-Verbose "[$functionName] Client-Request-Id: $clientRequestId"
                 }
                 if ($retryAfter)
                 {
-                    Write-Log -Message "Retry-After: $retryAfter" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+                    Write-Verbose "[$functionName] Retry-After: $retryAfter"
                 }
                 Write-Verbose "[$functionName] The full error message follows below:"
                 Write-Verbose "[$functionName] ----------------------------------------------------------"
@@ -983,31 +866,31 @@ $rawBodyForLog
                 # Raw server body already logged above when available
             }
         }
-        Write-Log -Message "Failed to call the Graph API: $_" -LogFile $logFile -Module $functionName -LogLevel Error -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "The status code is $statusCode" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+        Write-Verbose "[$functionName] Failed to call the Graph API: $_"
+        Write-Verbose "[$functionName] The status code is $statusCode"
         if ($statusCodeMessage)
         {
-            Write-Log -Message "$statusCode indicates $statusCodeMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+            Write-Verbose "[$functionName] $statusCode indicates $statusCodeMessage"
         }
         if ($statusDescription)
         {
-            Write-Log -Message "Status description: $statusDescription" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+            Write-Verbose "[$functionName] Status description: $statusDescription"
         }
-        Write-Log -Message "Status message: $statusMessage" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "The full error message follows below:" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "----------------------------------------------------------" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "Error: $($_)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "Exception message: $($PSItem.Exception.Message)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-        Write-Log -Message "Exception response: $($PSItem.Exception.Response)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+        Write-Verbose "[$functionName] Status message: $statusMessage"
+        Write-Verbose "[$functionName] The full error message follows below:"
+        Write-Verbose "[$functionName] ----------------------------------------------------------"
+        Write-Verbose "[$functionName] Error: $($_)"
+        Write-Verbose "[$functionName] Exception message: $($PSItem.Exception.Message)"
+        Write-Verbose "[$functionName] Exception response: $($PSItem.Exception.Response)"
         if ($responseBodyRaw)
         {
-            Write-Log -Message "Server Response (raw): $responseBodyRaw" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+            Write-Verbose "[$functionName] Server Response (raw): $responseBodyRaw"
         }
         return $statusCode
         # return $null
     }
-    Write-Log -Message "Response: $($response)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
-    Write-Log -Message "Response value: $($response.value)" -LogFile $logFile -Module $functionName -LogLevel Information -CMTraceFormat:$false -ErrorAction SilentlyContinue
+    Write-Verbose "[$functionName] Response: $($response)"
+    Write-Verbose "[$functionName] Response value: $($response.value)"
     return $response
 }
 
@@ -1076,7 +959,6 @@ function Get-GraphAccessToken()
         }
 
         Write-Verbose "[$functionName] Token expires at: $absoluteExpiryTime (in $expiresInSeconds seconds)"
-        Write-Log -logFile $logFile -Module $functionName -Message "Token cached with expiry: $absoluteExpiryTime" -LogLevel Verbose
 
         $Global:MemoryCache['accessToken'] = $cachedTokenObject
         Write-Verbose "[$functionName] Token successfully saved to memory cache"
@@ -1156,7 +1038,6 @@ function Get-GraphAccessToken()
 
         $functionName = $MyInvocation.MyCommand.Name
         Write-Verbose "[$functionName] Attempting certificate-based authentication"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Attempting certificate-based authentication with thumbprint: $CertificateThumbprint"
 
         # Get certificate from store
         $certificate = Get-ChildItem -Path Cert:\CurrentUser\My, Cert:\LocalMachine\My -Recurse |
@@ -1169,7 +1050,6 @@ function Get-GraphAccessToken()
         }
 
         Write-Verbose "[$functionName] Certificate found: Subject=$($certificate.Subject), NotAfter=$($certificate.NotAfter)"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Certificate found: Subject=$($certificate.Subject), NotAfter=$($certificate.NotAfter)"
 
         # Validate certificate
         if ($certificate.NotAfter -lt (Get-Date))
@@ -1195,13 +1075,11 @@ function Get-GraphAccessToken()
         }
 
         Write-Verbose "[$functionName] Sending token request with certificate authentication"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Sending token request with certificate authentication"
 
         $tokenResponse = Invoke-RestMethod -Method Post -Uri $TokenEndpoint -ContentType 'application/x-www-form-urlencoded' -Body $body -ErrorAction Stop
 
         Write-Verbose "[$functionName] Access token received successfully via certificate authentication"
         Write-Verbose "[$functionName] Token expires in: $($tokenResponse.expires_in) seconds"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Access token received successfully via certificate authentication. Expires in: $($tokenResponse.expires_in) seconds"
 
         return $tokenResponse
     }
@@ -1222,7 +1100,6 @@ function Get-GraphAccessToken()
 
         $functionName = $MyInvocation.MyCommand.Name
         Write-Verbose "[$functionName] Attempting client secret authentication"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Attempting client secret authentication"
 
         $body = @{
             client_id     = $ClientId
@@ -1232,13 +1109,11 @@ function Get-GraphAccessToken()
         }
 
         Write-Verbose "[$functionName] Sending request to token endpoint"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Sending token request with client secret authentication"
 
         $tokenResponse = Invoke-RestMethod -Method Post -Uri $TokenEndpoint -ContentType 'application/x-www-form-urlencoded' -Body $body -ErrorAction Stop
 
         Write-Verbose "[$functionName] Access token received successfully via client secret authentication"
         Write-Verbose "[$functionName] Token expires in: $($tokenResponse.expires_in) seconds"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Access token received successfully via client secret authentication. Expires in: $($tokenResponse.expires_in) seconds"
 
         return $tokenResponse
     }
@@ -1256,13 +1131,11 @@ function Get-GraphAccessToken()
         )
 
         Write-Verbose "[$FunctionName] $AuthMethod authentication failed: $Exception"
-        Write-Log -LogFile $LogFile -Module $FunctionName -Message "$AuthMethod authentication failed: $Exception" -LogLevel Error
 
         if ($Exception.Exception.Response)
         {
             $statusCode = $Exception.Exception.Response.StatusCode
             Write-Verbose "[$FunctionName] Status code: $statusCode"
-            Write-Log -LogFile $LogFile -Module $FunctionName -Message "HTTP Status code: $statusCode" -LogLevel Error
 
             try
             {
@@ -1274,7 +1147,6 @@ function Get-GraphAccessToken()
                 $errorJson = $errorMessage | ConvertFrom-Json
                 Write-Verbose "[$FunctionName] Error code: $($errorJson.error)"
                 Write-Verbose "[$FunctionName] Error description: $($errorJson.error_description)"
-                Write-Log -LogFile $LogFile -Module $FunctionName -Message "Error code: $($errorJson.error), Description: $($errorJson.error_description)" -LogLevel Error
             }
             catch
             {
@@ -1288,7 +1160,6 @@ function Get-GraphAccessToken()
     $renewalLeadTimeInMinutes = 5
     $timeBuffer = (Get-Date).AddMinutes($renewalLeadTimeInMinutes)
     Write-Verbose "[$functionName] Token renewal buffer time: $timeBuffer"
-    Write-Log -logFile $logFile -Module $functionName -Message "Token renewal buffer time: $timeBuffer"
     if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue))
     {
         Write-Verbose "[$functionName] Initializing global memory cache"
@@ -1297,7 +1168,6 @@ function Get-GraphAccessToken()
 
     if ($Global:MemoryCache.ContainsKey('accessToken'))
     {
-        Write-Log -LogFile $LogFile -Module "$functionName" -Message "Found token in memory cache"
         Write-Verbose "[$functionName] Found token in memory cache"
         $tokenObject = $Global:MemoryCache['accessToken']
         $absoluteExpiryTime = Get-TokenExpiryTime -accessTokenObject $tokenObject
@@ -1312,13 +1182,11 @@ function Get-GraphAccessToken()
         else
         {
             Write-Verbose "[$functionName] Cached token has expired or expires soon, acquiring new token"
-            Write-Log -LogFile $LogFile -Module "$functionName" -Message "Cached token expired or expires within $renewalLeadTimeInMinutes minutes"
         }
     }
     else
     {
         Write-Verbose "[$functionName] No token found in memory cache"
-        Write-Log -LogFile $LogFile -Module "$functionName" -Message "No token found in memory cache"
     }
 
     # Validate that we have at least one authentication method
@@ -1326,7 +1194,6 @@ function Get-GraphAccessToken()
     {
         $errorMsg = "Either clientSecret or certificateThumbprint must be provided"
         Write-Verbose "[$functionName] $errorMsg"
-        Write-Log -LogFile $LogFile -Module $functionName -Message $errorMsg -LogLevel Error
         return $null
     }
 
@@ -1342,27 +1209,23 @@ function Get-GraphAccessToken()
     if ($hasCertificate -and $hasClientSecret)
     {
         Write-Verbose "[$functionName] Both certificate and client secret provided - will try certificate first with fallback to secret"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Both certificate and client secret provided - will try certificate first with fallback to secret" -LogLevel Warning
         $tryBothWithFallback = $true
         $useCertificate = $true
     }
     elseif ($hasCertificate)
     {
         Write-Verbose "[$functionName] Using certificate-based authentication (certificate-only mode)"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Using certificate-based authentication (certificate-only mode)"
         $useCertificate = $true
     }
     else
     {
         Write-Verbose "[$functionName] Using client secret authentication"
-        Write-Log -LogFile $LogFile -Module $functionName -Message "Using client secret authentication"
         $useClientSecret = $true
     }
 
     $tokenEndpoint = "https://login.microsoftonline.com/$tenantId/oauth2/v2.0/token"
     $scope = 'https://graph.microsoft.com/.default'
     Write-Verbose "[$functionName] Token endpoint: $tokenEndpoint"
-    Write-Log -LogFile $LogFile -Module $functionName -Message "Token endpoint: $tokenEndpoint"
 
     # Attempt certificate authentication
     if ($useCertificate)
@@ -1380,7 +1243,6 @@ function Get-GraphAccessToken()
             if ($tryBothWithFallback)
             {
                 Write-Warning "[$functionName] Certificate authentication failed - falling back to client secret"
-                Write-Log -LogFile $LogFile -Module $functionName -Message "Certificate authentication failed - falling back to client secret" -LogLevel Warning
                 $useCertificate = $false
                 $useClientSecret = $true
             }
@@ -1407,684 +1269,13 @@ function Get-GraphAccessToken()
         }
     }
 }
-
-function Write-Log()
-{
-    <#
-.SYNOPSIS
-Writes log entries to a file with optional CMTrace formatting, rotation, and console output.
-
-.DESCRIPTION
-Write-Log supports:
-- Minimum log level filtering (Error, Warning, Information, Verbose, Debug)
-- Thread-safe appends via a named mutex and FileShare.ReadWrite
-- Log rotation by size with timestamped archive
-- CMTrace-compatible output
-- Start/Finish session separators
-- Optional console stream output per level
-- PassThru to return a structured log object
-
-PARAMETER SETS
-- Normal:        -Message -LogFile -Module [-WriteToConsole] [-LogLevel] [-CMTraceFormat] [-MaxLogSizeMB] [-PassThru] [-MinimumLogLevel]
-- StartLogging:  -StartLogging -LogFile [-OverwriteLog] [-CMTraceFormat] [-MaxLogSizeMB] [-MinimumLogLevel]
-- FinishLogging: -FinishLogging -LogFile [-CMTraceFormat] [-MaxLogSizeMB] [-MinimumLogLevel]
-
-.PARAMETER Message
-Text of the log entry (Normal set only).
-
-.PARAMETER LogFile
-Path to the log file. Parent folder is created if missing.
-
-.PARAMETER Module
-Module/component name to include in the entry (Normal set only).
-
-.PARAMETER WriteToConsole
-Also writes to the appropriate PowerShell stream (Error, Warning, Verbose, Debug).
-
-.PARAMETER LogLevel
-Severity for the entry. Default: Information.
-
-.PARAMETER CMTraceFormat
-Writes entries in CMTrace-compatible format.
-
-.PARAMETER MaxLogSizeMB
-Max size before rotation. Default: 10 MB.
-
-.PARAMETER PassThru
-Returns a PSCustomObject with log details.
-
-.PARAMETER StartLogging
-Writes a "start of log session" separator.
-
-.PARAMETER OverwriteLog
-Deletes existing log before starting a new session (with -StartLogging).
-
-.PARAMETER FinishLogging
-Writes an "end of log session" separator.
-
-.PARAMETER MinimumLogLevel
-Minimum severity to write to file. Default: Information.
-Error=1, Warning=2, Information=3, Verbose=4, Debug=5.
-Entries with higher (more detailed) level than the minimum are skipped for file output.
-
-.OUTPUTS
-- None by default
-- PSCustomObject when -PassThru is specified
-
-.EXAMPLE
-Write-Log -StartLogging -LogFile "C:\Logs\App.log" -OverwriteLog -CMTraceFormat
-
-Starts a new log session, optionally overwriting the existing file, using CMTrace format.
-
-.EXAMPLE
-Write-Log -Message "Initialized configuration" -Module "Bootstrap" -LogFile "C:\Logs\App.log" -LogLevel Information -MinimumLogLevel Information -WriteToConsole
-
-Writes an information entry if MinimumLogLevel allows it and echoes to console.
-
-.EXAMPLE
-Write-Log -Message "Verbose details for diagnostics" -Module "Worker" -LogFile "C:\Logs\App.log" -LogLevel Verbose -MinimumLogLevel Information
-
-Skips file write because Verbose is more detailed than the Information minimum.
-
-.EXAMPLE
-Write-Log -FinishLogging -LogFile "C:\Logs\App.log"
-
-Writes an end-of-session separator.
-    #>
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true, ParameterSetName = 'Normal')]
-        [string]$Message,
-        [Parameter(Mandatory = $true, ParameterSetName = 'Normal')]
-        [Parameter(Mandatory = $true, ParameterSetName = 'StartLogging')]
-        [Parameter(Mandatory = $true, ParameterSetName = 'FinishLogging')]
-        [ValidateScript({
-                # Convert PSDrive paths to filesystem paths for validation
-                try
-                {
-                    $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($_)
-                    $parentDir = Split-Path $resolvedPath -Parent
-                }
-                catch
-                {
-                    $parentDir = Split-Path $_ -Parent
-                }
-
-                if (-not (Test-Path $parentDir))
-                {
-                    try
-                    {
-                        New-Item -Path $parentDir -ItemType Directory -Force | Out-Null
-                    }
-                    catch
-                    {
-                        throw "Failed to create log directory: $_. Exception: $($_.Exception.Message)"
-                    }
-                }
-                return $true
-            })]
-        [string]$LogFile,
-        [Parameter(Mandatory = $true, ParameterSetName = 'Normal')]
-        [string]$Module,
-        [Parameter(Mandatory = $false, ParameterSetName = 'Normal')]
-        [switch]$WriteToConsole,
-        [Parameter(Mandatory = $false, ParameterSetName = 'Normal')]
-        [ValidateSet("Verbose", "Debug", "Information", "Warning", "Error")]
-        [string]$LogLevel = "Information",
-        [Parameter(Mandatory = $false, ParameterSetName = 'Normal')]
-        [Parameter(Mandatory = $false, ParameterSetName = 'StartLogging')]
-        [Parameter(Mandatory = $false, ParameterSetName = 'FinishLogging')]
-        [switch]$CMTraceFormat,
-        [Parameter(Mandatory = $false, ParameterSetName = 'Normal')]
-        [Parameter(Mandatory = $false, ParameterSetName = 'StartLogging')]
-        [Parameter(Mandatory = $false, ParameterSetName = 'FinishLogging')]
-        [int]$MaxLogSizeMB = 10,
-        [Parameter(Mandatory = $false, ParameterSetName = 'Normal')]
-        [switch]$PassThru,
-        [Parameter(Mandatory = $true, ParameterSetName = 'StartLogging')]
-        [switch]$StartLogging,
-        [Parameter(Mandatory = $false, ParameterSetName = 'StartLogging')]
-        [switch]$OverwriteLog,
-        [Parameter(Mandatory = $true, ParameterSetName = 'FinishLogging')]
-        [switch]$FinishLogging,
-        [Parameter(Mandatory = $false, ParameterSetName = 'Normal')]
-        [Parameter(Mandatory = $false, ParameterSetName = 'StartLogging')]
-        [Parameter(Mandatory = $false, ParameterSetName = 'FinishLogging')]
-        [ValidateSet('Error', 'Warning', 'Information', 'Verbose', 'Debug')]
-        [string]$MinimumLogLevel
-    )
-
-    try
-    {
-        # Convert PSDrive paths (like TestDrive:\test.log) to real filesystem paths
-        # This is necessary because .NET methods like [System.IO.File]::Open() don't understand PowerShell PSDrives
-        try
-        {
-            $LogFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogFile)
-        }
-        catch
-        {
-            # If conversion fails, use the original path (it might already be a valid filesystem path)
-            Write-Verbose "Could not resolve PSDrive path, using original: $LogFile"
-        }
-
-        # Use global minimum log level if not provided
-        if (-not $MinimumLogLevel -and $Global:MinimumLogLevel)
-        {
-            $MinimumLogLevel = $Global:MinimumLogLevel
-        }
-        elseif (-not $MinimumLogLevel)
-        {
-            $MinimumLogLevel = 'Information'
-        }
-
-        # Define log level hierarchy (higher numbers = more detailed logging)
-        $logLevelHierarchy = @{
-            'Error'       = 1
-            'Warning'     = 2
-            'Information' = 3
-            'Verbose'     = 4
-            'Debug'       = 5
-        }
-
-        # Handle StartLogging and FinishLogging switches
-        if ($StartLogging -or $FinishLogging)
-        {
-            # Set default values when using StartLogging or FinishLogging
-            $Module = $MyInvocation.MyCommand.Name
-            $LogLevel = "Information"
-
-            # Create separator line with appropriate message
-            if ($StartLogging)
-            {
-                $separatorLine = "=" * 30 + " start of log session " + "=" * 30
-            }
-            else
-            {
-                $separatorLine = "=" * 30 + " end of log session " + "=" * 30
-            }
-
-            # Ensure log directory exists
-            $logDir = Split-Path $LogFile -Parent
-            if (-not (Test-Path $logDir))
-            {
-                New-Item -Path $logDir -ItemType Directory -Force | Out-Null
-            }
-
-            if ($OverwriteLog)
-            {
-                Remove-Item -Path $LogFile -Force -ErrorAction SilentlyContinue | Out-Null
-            }
-
-            # Check for log rotation if file exists and is too large
-            if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt ($MaxLogSizeMB * 1MB))
-            {
-                $archiveFile = $LogFile -replace '\.log$', "_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-                Move-Item -Path $LogFile -Destination $archiveFile -Force
-                Write-Verbose "Log file rotated to: $archiveFile"
-            }
-
-            if ($CMTraceFormat)
-            {
-                # For CMTrace format, still use the separator but in CMTrace format
-                $cmTime = Get-Date -Format "HH:mm:ss.fff+000"
-                $cmDate = Get-Date -Format "MM-dd-yyyy"
-                $thread = [System.Threading.Thread]::CurrentThread.ManagedThreadId
-                $logEntry = "<![LOG[$separatorLine]LOG]!><time=`"$cmTime`" date=`"$cmDate`" component=`"$Module`" context=`"`" type=`"1`" thread=`"$thread`" file=`"`">"
-            }
-            else
-            {
-                # For standard format, just use the separator line without timestamp
-                $logEntry = $separatorLine
-            }
-
-            # Use mutex for thread safety
-            $mutexName = "Global\LogMutex_" + ($LogFile -replace '[\\/:*?"<>|]', '_')
-            $mutex = $null
-            $streamWriter = $null
-            $fileStream = $null
-
-            try
-            {
-                $mutex = New-Object System.Threading.Mutex($false, $mutexName)
-                $mutex.WaitOne() | Out-Null
-
-                # Use StreamWriter with FileShare.ReadWrite to allow concurrent access
-                $fileStream = [System.IO.File]::Open(
-                    $LogFile,
-                    [System.IO.FileMode]::Append,
-                    [System.IO.FileAccess]::Write,
-                    [System.IO.FileShare]::ReadWrite
-                )
-                $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
-                $streamWriter.WriteLine($logEntry)
-                $streamWriter.Flush()
-            }
-            catch [System.IO.IOException]
-            {
-                # If file is still locked, retry with exponential backoff
-                $retryCount = 0
-                $maxRetries = 5
-                $success = $false
-
-                while (-not $success -and $retryCount -lt $maxRetries)
-                {
-                    $retryCount++
-                    Start-Sleep -Milliseconds (100 * [Math]::Pow(2, $retryCount))
-
-                    try
-                    {
-                        $fileStream = [System.IO.File]::Open(
-                            $LogFile,
-                            [System.IO.FileMode]::Append,
-                            [System.IO.FileAccess]::Write,
-                            [System.IO.FileShare]::ReadWrite
-                        )
-                        $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
-                        $streamWriter.WriteLine($logEntry)
-                        $streamWriter.Flush()
-                        $success = $true
-                    }
-                    catch [System.IO.IOException]
-                    {
-                        if ($retryCount -ge $maxRetries)
-                        {
-                            Write-Warning "Failed to write to log after $maxRetries retries: $($_.Exception.Message)"
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                if ($streamWriter)
-                {
-                    try
-                    {
-                        $streamWriter.Close()
-                    }
-                    catch
-                    {
-                        Write-Warning "Write-Log: Failed to close StreamWriter: $($_.Exception.Message)"
-                    }
-
-                    try
-                    {
-                        $streamWriter.Dispose()
-                    }
-                    catch
-                    {
-                        Write-Warning "Write-Log: Failed to dispose StreamWriter: $($_.Exception.Message)"
-                    }
-                }
-
-                if ($fileStream)
-                {
-                    try
-                    {
-                        $fileStream.Close()
-                    }
-                    catch
-                    {
-                        Write-Warning "Write-Log: Failed to close FileStream: $($_.Exception.Message)"
-                    }
-
-                    try
-                    {
-                        $fileStream.Dispose()
-                    }
-                    catch
-                    {
-                        Write-Warning "Write-Log: Failed to dispose FileStream: $($_.Exception.Message)"
-                    }
-                }
-
-                if ($mutex)
-                {
-                    try
-                    {
-                        $mutex.ReleaseMutex()
-                    }
-                    catch
-                    {
-                        Write-Warning "Write-Log: Failed to release mutex: $($_.Exception.Message)"
-                    }
-
-                    try
-                    {
-                        $mutex.Dispose()
-                    }
-                    catch
-                    {
-                        Write-Warning "Write-Log: Failed to dispose mutex: $($_.Exception.Message)"
-                    }
-                }
-            }
-
-            # Write to console
-            if ($WriteToConsole)
-            {
-                Write-Host $separatorLine
-            }
-            return
-        }
-
-        # Check if this log entry should be written based on minimum log level
-        # Only continue if the current log level meets or exceeds the minimum threshold
-        if (-not ($StartLogging -or $FinishLogging))
-        {
-            $currentLogLevelValue = $logLevelHierarchy[$LogLevel]
-            $minimumLogLevelValue = $logLevelHierarchy[$MinimumLogLevel]
-
-            if ($currentLogLevelValue -gt $minimumLogLevelValue)
-            {
-                # Current log level is more detailed than the minimum, skip logging to file
-                # But still write to console streams
-                switch ($LogLevel)
-                {
-                    "Error"
-                    {
-                        if ($WriteToConsole)
-                        {
-                            Write-Error "[$Module] $Message" -ErrorAction SilentlyContinue
-                        }
-                    }
-                    "Warning"
-                    {
-                        if ($WriteToConsole)
-                        {
-                            Write-Warning "[$Module] $Message"
-                        }
-                    }
-                    "Verbose"
-                    {
-                        if ($WriteToConsole)
-                        {
-                            Write-Verbose "[$Module] $Message"
-                        }
-                    }
-                    "Debug"
-                    {
-                        if ($WriteToConsole)
-                        {
-                            Write-Debug "[$Module] $Message"
-                        }
-                    }
-                    default
-                    {
-                        # For Information level, we don't output to console in this case
-                    }
-                }
-                return
-            }
-        }
-
-        # Ensure log directory exists
-        $logDir = Split-Path $LogFile -Parent
-        if (-not (Test-Path $logDir))
-        {
-            New-Item -Path $logDir -ItemType Directory -Force | Out-Null
-        }
-
-        # Check for log rotation if file exists and is too large
-        if ((Test-Path $LogFile) -and (Get-Item $LogFile).Length -gt ($MaxLogSizeMB * 1MB))
-        {
-            $archiveFile = $LogFile -replace '\.log$', "_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
-            Move-Item -Path $LogFile -Destination $archiveFile -Force
-            Write-Verbose "Log file rotated to: $archiveFile"
-        }
-
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-        $thread = [System.Threading.Thread]::CurrentThread.ManagedThreadId
-
-        # Get context in a cross-platform way
-        try
-        {
-            if ($IsWindows -or ($null -eq $IsWindows -and $env:OS -eq "Windows_NT"))
-            {
-                $Context = $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
-            }
-            else
-            {
-                $Context = $env:USER
-            }
-        }
-        catch
-        {
-            $Context = "Unknown"
-        }
-
-        if ($CMTraceFormat)
-        {
-            # True CMTrace format:
-            $cmTime = Get-Date -Format "HH:mm:ss.fff+000"
-            $cmDate = Get-Date -Format "MM-dd-yyyy"
-            $severity = switch ($LogLevel)
-            {
-                "Error"
-                {
-                    3
-                }
-                "Warning"
-                {
-                    2
-                }
-                default
-                {
-                    1
-                }
-            }
-            $logEntry = "<![LOG[$Message]LOG]!><time=`"$cmTime`" date=`"$cmDate`" component=`"$Module`" context=`"`" type=`"$severity`" thread=`"$thread`" file=`"`">"
-        }
-        else
-        {
-            # Enhanced standard format with thread ID
-            $logEntry = "$timestamp [$LogLevel] [$Module] [Thread:$thread] [Context:$Context] $Message"
-        }
-
-        # Use mutex for thread safety in concurrent scenarios
-        $mutexName = "Global\LogMutex_" + ($LogFile -replace '[\\/:*?"<>|]', '_')
-        $mutex = $null
-        $streamWriter = $null
-        $fileStream = $null
-
-        try
-        {
-            $mutex = New-Object System.Threading.Mutex($false, $mutexName)
-            $mutex.WaitOne() | Out-Null
-
-            # Use StreamWriter with FileShare.ReadWrite to allow concurrent access
-            $fileStream = [System.IO.File]::Open(
-                $LogFile,
-                [System.IO.FileMode]::Append,
-                [System.IO.FileAccess]::Write,
-                [System.IO.FileShare]::ReadWrite
-            )
-            $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
-            $streamWriter.WriteLine($logEntry)
-            $streamWriter.Flush()
-        }
-        catch [System.IO.IOException]
-        {
-            # If file is still locked, retry with exponential backoff
-            $retryCount = 0
-            $maxRetries = 5
-            $success = $false
-
-            while (-not $success -and $retryCount -lt $maxRetries)
-            {
-                $retryCount++
-                Start-Sleep -Milliseconds (100 * [Math]::Pow(2, $retryCount))
-
-                try
-                {
-                    $fileStream = [System.IO.File]::Open(
-                        $LogFile,
-                        [System.IO.FileMode]::Append,
-                        [System.IO.FileAccess]::Write,
-                        [System.IO.FileShare]::ReadWrite
-                    )
-                    $streamWriter = New-Object System.IO.StreamWriter($fileStream, [System.Text.Encoding]::UTF8)
-                    $streamWriter.WriteLine($logEntry)
-                    $streamWriter.Flush()
-                    $success = $true
-                }
-                catch [System.IO.IOException]
-                {
-                    if ($retryCount -ge $maxRetries)
-                    {
-                        Write-Warning "Failed to write to log after $maxRetries retries: $($_.Exception.Message)"
-                    }
-                }
-            }
-        }
-        finally
-        {
-            if ($streamWriter)
-            {
-                try
-                {
-                    $streamWriter.Close()
-                }
-                catch
-                {
-                    Write-Warning "Write-Log: Failed to close StreamWriter: $($_.Exception.Message)"
-                }
-                try
-                {
-                    $streamWriter.Dispose()
-                }
-                catch
-                {
-                    Write-Warning "Write-Log: Failed to dispose StreamWriter: $($_.Exception.Message)"
-                }
-            }
-            if ($fileStream)
-            {
-                try
-                {
-                    $fileStream.Close()
-                }
-                catch
-                {
-                    Write-Warning "Write-Log: Failed to close FileStream: $($_.Exception.Message)"
-                }
-                try
-                {
-                    $fileStream.Dispose()
-                }
-                catch
-                {
-                    Write-Warning "Write-Log: Failed to dispose FileStream: $($_.Exception.Message)"
-                }
-            }
-            if ($mutex)
-            {
-                try
-                {
-                    $mutex.ReleaseMutex()
-                }
-                catch
-                {
-                    Write-Warning "Write-Log: Failed to release mutex: $($_.Exception.Message)"
-                }
-                try
-                {
-                    $mutex.Dispose()
-                }
-                catch
-                {
-                    Write-Warning "Write-Log: Failed to dispose mutex: $($_.Exception.Message)"
-                }
-            }
-        }
-
-        # Write to appropriate PowerShell stream based on log level
-        switch ($LogLevel)
-        {
-            "Error"
-            {
-                if ($WriteToConsole)
-                {
-                    Write-Error "[$Module] $Message" -ErrorAction SilentlyContinue
-                }
-            }
-            "Warning"
-            {
-                if ($WriteToConsole)
-                {
-                    Write-Warning "[$Module] $Message"
-                }
-            }
-            "Verbose"
-            {
-                if ($WriteToConsole)
-                {
-                    Write-Verbose "[$Module] $Message"
-                }
-            }
-            "Debug"
-            {
-                if ($WriteToConsole)
-                {
-                    Write-Debug "[$Module] $Message"
-                }
-            }
-            default
-            {
-                if ($WriteToConsole)
-                {
-                    Write-Verbose "Logged: $logEntry"
-                }
-            }
-        }
-
-        # Return log entry if PassThru is specified
-        if ($PassThru)
-        {
-            return [PSCustomObject]@{
-                Timestamp = $timestamp
-                LogLevel  = $LogLevel
-                Module    = $Module
-                Message   = $Message
-                Thread    = $thread
-                LogFile   = $LogFile
-                Entry     = $logEntry
-            }
-        }
-    }
-    catch
-    {
-        Write-Error "Failed to write to log file '$LogFile': $_"
-        # Fallback to console output
-        Write-Host "$timestamp [$LogLevel] [$Module] $Message" -ForegroundColor $(
-            switch ($LogLevel)
-            {
-                "Error"
-                {
-                    "Red"
-                }
-                "Warning"
-                {
-                    "Yellow"
-                }
-                "Debug"
-                {
-                    "Cyan"
-                }
-                default
-                {
-                    "White"
-                }
-            }
-        )
-    }
-}
 #endregion helper functions
 
+#region check configuration
 $configPath = Join-Path -Path $PSScriptRoot -ChildPath $configFile
 if (-not (Test-Path -Path $configPath))
 {
-    Write-Host "Config file not found at $configPath. Exiting script." -ForegroundColor Red
+    Write-Host "Config file not found at $configPath. Using default values." -ForegroundColor Red
     $config = @{}
 }
 else
@@ -2092,6 +1283,13 @@ else
     Write-Verbose "Config file found at $configPath. Loading configuration."
     $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
 }
+$appListPath = Join-Path -Path $PSScriptRoot -ChildPath $Applist
+if (-not (Test-Path -Path $appListPath))
+{
+    Write-Host "App list file not found at $appListPath. Exitting script." -ForegroundColor Red
+    exit 1
+}
+#endregion check configuration
 
 #region Define variables
 $tenantId = if ($config.tenantId)
@@ -2126,10 +1324,9 @@ else
 {
     $null
 }
-$scriptName = $MyInvocation.MyCommand.Name
-$global:LogFile = Join-Path -Path $PSScriptRoot -ChildPath "logs\$($scriptName)-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 $managedAppUri = "deviceAppManagement/mobileApps"
 $accessToken = Get-GraphAccessToken -tenantId $tenantId -clientId $clientId -clientSecret $clientSecret -certificateThumbprint $certificateThumbprint
+$CSVAppList = Import-Csv -Path $appListPath
 $appTypes = @(
     @{
         AppType     = "Win32 App"
@@ -2177,11 +1374,10 @@ $appTypes = @(
         Description = "Apps from the Microsoft Store (including the `"new`" Store experience)"
     }
 )
+$appArray = @()
 #endregion Define variables
 
-write-log -logFile $logFile -startLogging
 $apps = Invoke-GraphAPI -ResourcePath $managedAppUri -accessToken $AccessToken
-$appArray = @()
 foreach ($app in $apps.value)
 {
     if ($app.'@odata.type' -in $appTypes.ODataType)
@@ -2198,78 +1394,197 @@ foreach ($app in $apps.value)
 }
 Write-Host "Processed $($appArray.Count) apps..." -ForegroundColor Green
 
-# Use graphical interface to select app
 if ($appArray.Count -eq 0)
 {
     Write-Host "No eligible apps found. Exiting script." -ForegroundColor Red
-    write-log -logFile $logFile -FinishLogging
     exit 1
 }
 
-$selectedApp = $appArray | Out-GridView -Title "Select an application to update" -OutputMode Single
+# Match apps from appArray with logos from CSV
+$updatePaths = @()
+$updateBodies = @()
+$matchedAppNames = @()
+$noMatchApps = @()
+$logoNotFoundApps = @()
 
-if ($null -eq $selectedApp)
+Write-Host "Matching apps with logos from CSV..." -ForegroundColor Cyan
+foreach ($csvEntry in $CSVAppList)
 {
-    Write-Host "No app selected. Exiting script." -ForegroundColor Yellow
-    write-log -logFile $logFile -FinishLogging
-    exit 0
+    $matchedApp = $appArray | Where-Object { $_.displayName -ieq $csvEntry.AppName }
+    if (-not $matchedApp)
+    {
+        $noMatchApps += $csvEntry.AppName
+        Write-Verbose "No matching app found in Intune for CSV entry: '$($csvEntry.AppName)'"
+        continue
+    }
+
+    $logoFilePath = Join-Path -Path $PSScriptRoot -ChildPath $csvEntry.Logo
+    if (-not (Test-Path -Path $logoFilePath))
+    {
+        $logoNotFoundApps += $csvEntry.AppName
+        Write-Host "  [WARNING] Logo file not found for '$($csvEntry.AppName)': $logoFilePath" -ForegroundColor Yellow
+        continue
+    }
+
+    $extension = [System.IO.Path]::GetExtension($logoFilePath).ToLower()
+    $mimeType = switch ($extension)
+    {
+        '.png'
+        {
+            'image/png' 
+        }
+        '.jpg'
+        {
+            'image/jpeg' 
+        }
+        '.jpeg'
+        {
+            'image/jpeg' 
+        }
+        '.gif'
+        {
+            'image/gif' 
+        }
+        default
+        {
+            'image/png' 
+        }
+    }
+
+    $imageBytes = [System.IO.File]::ReadAllBytes($logoFilePath)
+    $base64Image = [Convert]::ToBase64String($imageBytes)
+
+    $bodyJson = @{
+        largeIcon = @{
+            '@odata.type' = 'microsoft.graph.mimeContent'
+            type          = $mimeType
+            value         = $base64Image
+        }
+    } | ConvertTo-Json -Depth 10
+
+    $updatePaths += "$managedAppUri/$($matchedApp.id)"
+    $updateBodies += $bodyJson
+    $matchedAppNames += $matchedApp.displayName
 }
 
-Write-Host "Selected app: '$($selectedApp.displayName)'" -ForegroundColor Yellow
+Write-Host "Found $($updatePaths.Count) app(s) with matching logos to update." -ForegroundColor Cyan
 
-# Use File Open Dialog to select PNG file
-Add-Type -AssemblyName System.Windows.Forms
-$fileDialog = New-Object System.Windows.Forms.OpenFileDialog
-$fileDialog.Title = "Select PNG Image File"
-$fileDialog.Filter = "PNG Files (*.png)|*.png|All Files (*.*)|*.*"
-$fileDialog.InitialDirectory = [Environment]::GetFolderPath('MyPictures')
-
-$dialogResult = $fileDialog.ShowDialog()
-
-if ($dialogResult -ne [System.Windows.Forms.DialogResult]::OK)
+if ($updatePaths.Count -eq 0)
 {
-    Write-Host "No file selected. Exiting script." -ForegroundColor Yellow
-    write-log -logFile $logFile -FinishLogging
-    exit 0
+    Write-Host "No apps could be matched to logo files. Exiting." -ForegroundColor Red
+    exit 1
 }
 
-$path = $fileDialog.FileName
-Write-Host "Selected file: $path" -ForegroundColor Cyan
-$imageBytes = [System.IO.File]::ReadAllBytes($path)
-$base64Image = [Convert]::ToBase64String($imageBytes)
+# Send batch update
+Write-Host "Sending batch update to update app icons..." -ForegroundColor Cyan
+$batchResponse = Invoke-GraphAPI -ResourcePath $updatePaths -accessToken $AccessToken -Method PATCH -body $updateBodies
 
-# Construct request body as hashtable, then convert to JSON
-$params = @{
-    largeIcon = @{
-        "@odata.type" = "microsoft.graph.mimeContent"
-        type          = "image/png"
-        value         = $base64Image
+# Evaluate results and build summary
+$successCount = 0
+$failedApps = @()
+
+if ($batchResponse -is [hashtable] -and $batchResponse.batchProcessed)
+{
+    # Batch path: response IDs are 1-based and globally unique across sub-batches
+    foreach ($result in $batchResponse.value)
+    {
+        $appIndex = [int]$result.id - 1
+        $appName = if ($appIndex -ge 0 -and $appIndex -lt $matchedAppNames.Count)
+        {
+            $matchedAppNames[$appIndex]
+        }
+        else
+        {
+            "Unknown (id=$($result.id))"
+        }
+        if ($result.status -ge 200 -and $result.status -lt 300)
+        {
+            $successCount++
+        }
+        else
+        {
+            $errorMsg = if ($result.body -and $result.body.error)
+            {
+                $result.body.error.message 
+            }
+            else
+            {
+                "HTTP $($result.status)" 
+            }
+            $failedApps += [PSCustomObject]@{ AppName = $appName; Error = $errorMsg }
+        }
     }
 }
-
-# Convert to JSON for API call
-$bodyJson = $params | ConvertTo-Json -Depth 10
-
-# Make API call with JSON body
-Write-Host "Updating app icon..." -ForegroundColor Cyan
-$APIResponse = Invoke-GraphAPI -ResourcePath "$managedAppUri/$($selectedApp.id)" -accessToken $AccessToken -Method PATCH -body $bodyJson
-
-# Check for successful response
-# Invoke-GraphAPI returns PSCustomObject on success, integer status code on error
-if ($APIResponse -is [PSCustomObject])
+elseif ($updatePaths.Count -eq 1)
 {
-    Write-Host "Successfully updated the app's large icon." -ForegroundColor Green
-    Write-Log -LogFile $logFile -Module $scriptName -Message "Successfully updated icon for app: $($selectedApp.displayName)" -LogLevel Information
-}
-elseif ($APIResponse -is [int])
-{
-    Write-Host "Failed to update the app's large icon. Status code: $APIResponse" -ForegroundColor Red
-    Write-Log -LogFile $logFile -Module $scriptName -Message "Failed to update icon. Status code: $APIResponse" -LogLevel Error
+    # Single-request path (Invoke-GraphAPI strips single-item arrays)
+    if ($batchResponse -is [int])
+    {
+        $failedApps += [PSCustomObject]@{ AppName = $matchedAppNames[0]; Error = "HTTP $batchResponse" }
+    }
+    else
+    {
+        # $null (204 No Content) or PSCustomObject both indicate success
+        $successCount++
+    }
 }
 else
 {
-    Write-Host "Failed to update the app's large icon. Unexpected response type." -ForegroundColor Red
-    Write-Log -LogFile $logFile -Module $scriptName -Message "Unexpected response type from API call" -LogLevel Error
+    Write-Host "Unexpected response received from batch update." -ForegroundColor Red
 }
 
-write-log -logFile $logFile -FinishLogging
+# Print summary
+Write-Host ""
+Write-Host "===== Update Summary =====" -ForegroundColor Cyan
+Write-Host "  Successfully updated : $successCount" -ForegroundColor $(if ($successCount -gt 0)
+    {
+        'Green' 
+    }
+    else
+    {
+        'Yellow' 
+    })
+Write-Host "  Failed to update     : $($failedApps.Count)" -ForegroundColor $(if ($failedApps.Count -gt 0)
+    {
+        'Red' 
+    }
+    else
+    {
+        'Green' 
+    })
+if ($noMatchApps.Count -gt 0)
+{
+    Write-Host "  Not found in Intune  : $($noMatchApps.Count)" -ForegroundColor Yellow
+}
+if ($logoNotFoundApps.Count -gt 0)
+{
+    Write-Host "  Logo file missing    : $($logoNotFoundApps.Count)" -ForegroundColor Yellow
+}
+
+if ($failedApps.Count -gt 0)
+{
+    Write-Host ""
+    Write-Host "Failed apps:" -ForegroundColor Red
+    foreach ($failedApp in $failedApps)
+    {
+        Write-Host "  - $($failedApp.AppName): $($failedApp.Error)" -ForegroundColor Red
+    }
+}
+if ($noMatchApps.Count -gt 0)
+{
+    Write-Host ""
+    Write-Host "Apps in CSV not found in Intune:" -ForegroundColor Yellow
+    foreach ($appName in $noMatchApps)
+    {
+        Write-Host "  - $appName" -ForegroundColor Yellow
+    }
+}
+if ($logoNotFoundApps.Count -gt 0)
+{
+    Write-Host ""
+    Write-Host "Apps skipped due to missing logo files:" -ForegroundColor Yellow
+    foreach ($appName in $logoNotFoundApps)
+    {
+        Write-Host "  - $appName" -ForegroundColor Yellow
+    }
+}
