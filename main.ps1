@@ -1,12 +1,12 @@
 [CmdletBinding()]
 param(
     [string]$configFile = 'config.json',
-    [string]$Applist = 'applist.csv'
+    [string]$Applist = 'applist.csv',
+    [switch]$UpdateLogos
 )
 
 #region helper functions
-function Invoke-GraphAPI()
-{
+function Invoke-GraphAPI {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -28,12 +28,10 @@ function Invoke-GraphAPI()
 
     #region variables and logs
     $functionName = $MyInvocation.MyCommand.Name
-    if ($accessToken)
-    {
+    if ($accessToken) {
         Write-Verbose "[$functionName] Access token provided."
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] Access token not provided. Please provide a valid access token."
         return
     }
@@ -42,8 +40,7 @@ function Invoke-GraphAPI()
     $isArrayInput = $ResourcePath -is [array]
     Write-Verbose "[$functionName] isArrayInput: $isArrayInput"
     # Handle single-item array
-    if ($isArrayInput -and $ResourcePath.Count -eq 1)
-    {
+    if ($isArrayInput -and $ResourcePath.Count -eq 1) {
         Write-Verbose "[$functionName] Single-item array detected, processing as single request"
         $ResourcePath = $ResourcePath[0]
         $isArrayInput = $false
@@ -52,8 +49,7 @@ function Invoke-GraphAPI()
     $isBatchRequest = $isArrayInput -and $ResourcePath.Count -gt 1
     $batchThreshold = 1
     Write-Verbose "[$functionName] isBatchRequest: $isBatchRequest with a threshold of $batchThreshold"
-    if ($isBatchRequest -and $ResourcePath.Count -ge $batchThreshold)
-    {
+    if ($isBatchRequest -and $ResourcePath.Count -ge $batchThreshold) {
         Write-Verbose "[$functionName] Batch request detected: $($ResourcePath.Count) resources"
         # Attempt to use native Graph API $batch endpoint
         # Graph API supports up to 20 requests per batch
@@ -63,38 +59,31 @@ function Invoke-GraphAPI()
         $failureCount = 0
         # Split requests into batches of max 20
         $batches = @()
-        for ($i = 0; $i -lt $ResourcePath.Count; $i += $maxBatchSize)
-        {
+        for ($i = 0; $i -lt $ResourcePath.Count; $i += $maxBatchSize) {
             $batchSize = [Math]::Min($maxBatchSize, $ResourcePath.Count - $i)
             $batches += , @($ResourcePath[$i..($i + $batchSize - 1)])
         }
         Write-Verbose "[$functionName] Processing $($ResourcePath.Count) requests in $($batches.Count) batch(es)"
         $batchIndex = 0
-        foreach ($batch in $batches)
-        {
+        foreach ($batch in $batches) {
             # Build batch request body according to Graph API spec
             $batchRequests = @()
             $requestId = 1
-            foreach ($path in $batch)
-            {
+            foreach ($path in $batch) {
                 # Build full URL for the request
                 $requestUrl = "/$path"
                 # Handle filters, search, and extra parameters in the URL
                 $queryParams = @()
-                if ($Filter)
-                {
+                if ($Filter) {
                     $queryParams += "`$filter=$([uri]::EscapeUriString($Filter))"
                 }
-                if ($Search)
-                {
+                if ($Search) {
                     $queryParams += "`$search=$([uri]::EscapeUriString($Search))"
                 }
-                if ($ExtraParameters)
-                {
+                if ($ExtraParameters) {
                     $queryParams += $ExtraParameters
                 }
-                if ($queryParams.Count -gt 0)
-                {
+                if ($queryParams.Count -gt 0) {
                     $requestUrl += "?" + ($queryParams -join "&")
                 }
                 # Build request object
@@ -104,35 +93,28 @@ function Invoke-GraphAPI()
                     url    = $requestUrl
                 }
                 # Add headers if needed
-                if ($consistencyLevel)
-                {
+                if ($consistencyLevel) {
                     $batchRequest['headers'] = @{
                         'ConsistencyLevel' = 'eventual'
                     }
                 }
                 # Add body if provided
-                if ($body)
-                {
+                if ($body) {
                     # Support per-request bodies: if $body is an array, pick the body for this specific request
                     $globalPathIndex = ($batchIndex * $maxBatchSize) + ($requestId - 1)
-                    $requestBody = if ($body -is [array])
-                    {
-                        if ($globalPathIndex -lt $body.Count)
-                        {
-                            $body[$globalPathIndex] 
+                    $requestBody = if ($body -is [array]) {
+                        if ($globalPathIndex -lt $body.Count) {
+                            $body[$globalPathIndex]
                         }
-                        else
-                        {
-                            $body[0] 
+                        else {
+                            $body[0]
                         }
                     }
-                    else
-                    {
+                    else {
                         $body
                     }
                     $batchRequest['body'] = $requestBody | ConvertFrom-Json
-                    if (-not $batchRequest.ContainsKey('headers'))
-                    {
+                    if (-not $batchRequest.ContainsKey('headers')) {
                         $batchRequest['headers'] = @{}
                     }
                     $batchRequest['headers']['Content-Type'] = 'application/json'
@@ -145,8 +127,7 @@ function Invoke-GraphAPI()
                 requests = $batchRequests
             } | ConvertTo-Json -Depth 10
             # Send batch request to Graph API
-            try
-            {
+            try {
                 $batchHeaders = @{
                     'Authorization' = "Bearer $accessToken"
                     'Content-Type'  = 'application/json'
@@ -156,29 +137,24 @@ function Invoke-GraphAPI()
                 # Process batch responses
                 # Renumber response IDs to be globally unique across all batches
                 $globalIdOffset = $batchIndex * $maxBatchSize
-                foreach ($response in $batchResponse.responses)
-                {
+                foreach ($response in $batchResponse.responses) {
                     # Adjust the response ID to be globally unique (1-240 instead of 1-20 per batch)
                     $globalId = ([int]$response.id) + $globalIdOffset
                     $response.id = $globalId
 
-                    if ($response.status -ge 200 -and $response.status -lt 300)
-                    {
+                    if ($response.status -ge 200 -and $response.status -lt 300) {
                         # Preserve the entire response object so downstream code can match by id
                         $allResults += $response
                         $successCount++
                     }
-                    else
-                    {
+                    else {
                         # Include failed responses so downstream code can handle them properly
                         $allResults += $response
                         $failureCount++
-                        $errorMsg = if ($response.body.error)
-                        {
+                        $errorMsg = if ($response.body.error) {
                             $response.body.error.message
                         }
-                        else
-                        {
+                        else {
                             "Unknown error"
                         }
                         Write-Verbose "[$functionName] Batch request ID $($response.id) failed with status $($response.status): $errorMsg"
@@ -186,28 +162,22 @@ function Invoke-GraphAPI()
                 }
                 $batchIndex++
             }
-            catch
-            {
+            catch {
                 # Final fallback: process each resource path individually
                 $batchPathIndex = 0
-                foreach ($path in $batch)
-                {
+                foreach ($path in $batch) {
                     # Calculate the global index for this path to select the correct per-request body
                     $globalPathIndex = ($batchIndex * $maxBatchSize) + $batchPathIndex
                     $batchPathIndex++
-                    $singleBody = if ($body -is [array])
-                    {
-                        if ($globalPathIndex -lt $body.Count)
-                        {
-                            $body[$globalPathIndex] 
+                    $singleBody = if ($body -is [array]) {
+                        if ($globalPathIndex -lt $body.Count) {
+                            $body[$globalPathIndex]
                         }
-                        else
-                        {
-                            $null 
+                        else {
+                            $null
                         }
                     }
-                    else
-                    {
+                    else {
                         $body
                     }
                     # Recursive call with single resource path
@@ -215,12 +185,10 @@ function Invoke-GraphAPI()
                         -method $method -Filter $Filter -Search $Search -ExtraParameters $ExtraParameters `
                         -body $singleBody -consistencyLevel:$consistencyLevel -secureString:$secureString
                     # Check if result is an error status code (integer) or null
-                    if ($null -eq $result -or $result -is [int])
-                    {
+                    if ($null -eq $result -or $result -is [int]) {
                         $failureCount++
                     }
-                    else
-                    {
+                    else {
                         $allResults += $result
                         $successCount++
                     }
@@ -232,12 +200,10 @@ function Invoke-GraphAPI()
         return @{
             value          = $allResults
             batchProcessed = $true
-            batchMethod    = if ($useBatchProcessor)
-            {
+            batchMethod    = if ($useBatchProcessor) {
                 "GraphCore"
             }
-            else
-            {
+            else {
                 "NativeBatch"
             }
             successCount   = $successCount
@@ -253,8 +219,7 @@ function Invoke-GraphAPI()
     #endregion
 
     #region Encode filter and add headers
-    if ($Filter)
-    {
+    if ($Filter) {
         Write-Verbose "[$functionName] Splitting filter by logical operators while preserving operators."
         $filterParts = [System.Collections.ArrayList]::new()
         $logicalOperators = [System.Collections.ArrayList]::new()
@@ -265,20 +230,17 @@ function Invoke-GraphAPI()
         $logicalOperaterMatches = [regex]::Matches($Filter, $pattern)
         Write-Verbose "[$functionName] Found $($logicalOperaterMatches.Count) logical operators."
         # If no logical operators, process as a single condition
-        if ($logicalOperaterMatches.Count -eq 0)
-        {
+        if ($logicalOperaterMatches.Count -eq 0) {
             Write-Verbose "[$functionName] No logical operators found. Processing as a single filter condition."
             $processedFilter = ProcessFilterCondition -condition $Filter
             Write-Verbose "[$functionName] Processed single filter condition: $processedFilter"
             $encodedFilter = $processedFilter
             Write-Verbose "[$functionName] Encoded filter: $encodedFilter"
         }
-        else
-        {
+        else {
             # Process each part of the filter
             Write-Verbose "[$functionName] Logical operators found. Processing filter as multiple conditions."
-            foreach ($logicalOperatorMatch in $logicalOperaterMatches)
-            {
+            foreach ($logicalOperatorMatch in $logicalOperaterMatches) {
                 Write-Verbose "[$functionName] Processing filter condition before logical operator: $($Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex))"
                 $condition = $Filter.Substring($lastIndex, $logicalOperatorMatch.Index - $lastIndex)
                 Write-Verbose "[$functionName] Condition to process: $condition"
@@ -290,8 +252,7 @@ function Invoke-GraphAPI()
                 Write-Verbose "[$functionName] Logical operators so far: $($logicalOperators -join ', ')"
             }
             # Don't forget the last part after the last logical operator
-            if ($lastIndex -lt $Filter.Length)
-            {
+            if ($lastIndex -lt $Filter.Length) {
                 Write-Verbose "[$functionName] Processing filter condition after the last logical operator."
                 $condition = $Filter.Substring($lastIndex)
                 [void]$filterParts.Add((ProcessFilterCondition -condition $condition))
@@ -300,8 +261,7 @@ function Invoke-GraphAPI()
             # Rebuild the filter string with processed parts and original logical operators
             Write-Verbose "[$functionName] Rebuilding the filter string with processed parts and logical operators."
             $encodedFilter = $filterParts[0]
-            for ($i = 0; $i -lt $logicalOperators.Count; $i++)
-            {
+            for ($i = 0; $i -lt $logicalOperators.Count; $i++) {
                 $encodedFilter += " $($logicalOperators[$i]) $($filterParts[$i+1])"
                 Write-Verbose "[$functionName] Adding logical operator: $($logicalOperators[$i])"
             }
@@ -310,50 +270,42 @@ function Invoke-GraphAPI()
         $encodedUri = "$uri`?`$filter=$([uri]::EscapeUriString($encodedFilter))"
         Write-Verbose "[$functionName] Uri after applying filters: $encodedUri"
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] No filter provided."
         $encodedUri = $uri
     }
 
     # Handle search parameter
-    if ($Search)
-    {
+    if ($Search) {
         Write-Verbose "[$functionName] Processing search parameter: $Search"
         # URL encode the search string
         $encodedSearch = [uri]::EscapeUriString($Search)
         Write-Verbose "[$functionName] Encoded search: $encodedSearch"
         # Add search parameter to URI
-        if ($encodedUri.Contains("?"))
-        {
+        if ($encodedUri.Contains("?")) {
             $encodedUri = "$encodedUri&`$search=$encodedSearch"
         }
-        else
-        {
+        else {
             $encodedUri = "$encodedUri`?`$search=$encodedSearch"
         }
         Write-Verbose "[$functionName] Uri after applying search: $encodedUri"
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] No search parameter provided."
     }
 
-    if ($extraParameters)
-    {
+    if ($extraParameters) {
         Write-Verbose "[$functionName] Extra parameters provided."
         # Initialize the parameter list
         $paramsList = @()
         # Split by ampersand to get individual key-value pairs
         $keyValuePairs = $extraParameters -split '&'
         Write-Verbose "[$functionName] Found $($keyValuePairs.Count) key-value pairs."
-        foreach ($pair in $keyValuePairs)
-        {
+        foreach ($pair in $keyValuePairs) {
             Write-Verbose "[$functionName] Processing key-value pair: $pair"
             # Split each pair by equals sign to separate key and value
             $keyAndValue = $pair -split '=', 2
-            if ($keyAndValue.Count -eq 2)
-            {
+            if ($keyAndValue.Count -eq 2) {
                 $key = $keyAndValue[0].Trim()
                 $value = $keyAndValue[1].Trim()
                 Write-Verbose "[$functionName] Key: $key"
@@ -364,8 +316,7 @@ function Invoke-GraphAPI()
                 # Add the formatted parameter to the list
                 $paramsList += "$formattedKey=$value"
             }
-            else
-            {
+            else {
                 Write-Warning "Invalid parameter format: $pair - skipping"
             }
         }
@@ -375,24 +326,20 @@ function Invoke-GraphAPI()
         $queryString = $paramsList -join '&'
         Write-Verbose "[$functionName] Final query string: $queryString"
         # Append the extra parameters to the URI
-        if ($filter -or $Search)
-        {
+        if ($filter -or $Search) {
             Write-Verbose "[$functionName] Adding extra parameters to the uri along with existing parameters."
             $encodedUri = "$encodedUri`&$queryString"
         }
-        else
-        {
+        else {
             Write-Verbose "[$functionName] No filter or search provided. Adding extra parameters to the uri."
             $encodedUri = "$encodedUri`?$queryString"
         }
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] No extra parameters provided."
     }
     # Build default headers with Authorization and Content-Type
-    if ($consistencyLevel)
-    {
+    if ($consistencyLevel) {
         Write-Verbose "[$functionName] Adding consistency level to the headers."
         $defaultHeaders = @{
             Authorization    = "Bearer $accessToken"
@@ -400,8 +347,7 @@ function Invoke-GraphAPI()
             ConsistencyLevel = 'Eventual'
         }
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] No consistency level provided."
         $defaultHeaders = @{
             Authorization  = "Bearer $accessToken"
@@ -410,11 +356,9 @@ function Invoke-GraphAPI()
     }
 
     # Merge custom headers if provided (custom headers take precedence)
-    if ($headers)
-    {
+    if ($headers) {
         Write-Verbose "[$functionName] Custom headers provided. Merging with default headers."
-        foreach ($key in $headers.Keys)
-        {
+        foreach ($key in $headers.Keys) {
             $defaultHeaders[$key] = $headers[$key]
             Write-Verbose "[$functionName] Added/Overridden header: $key"
         }
@@ -431,20 +375,17 @@ function Invoke-GraphAPI()
         UseBasicParsing = $true
     }
     #add headers parameter if it was passed
-    if ($headers)
-    {
+    if ($headers) {
         Write-Verbose "[$functionName] Headers provided. Adding to the request."
         $restParams['Headers'] = $headers
     }
     # Only add Body parameter if it exists
-    if ($body)
-    {
+    if ($body) {
         Write-Verbose "[$functionName] Body parameter provided. Adding to the request."
         $restParams['Body'] = $body
     }
     #Add statusCodeVariable if we are running under powershell  7.0 or higher
-    if ($PSVersionTable.PSVersion.Major -ge 7)
-    {
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
         Write-Verbose "[$functionName] PowerShell version is $($PSVersionTable.PSVersion.Major ). Adding StatusCodeVariable to the request."
         $restParams['StatusCodeVariable'] = 'statusCode'
     }
@@ -452,24 +393,20 @@ function Invoke-GraphAPI()
     Write-Verbose "[$functionName] URI: $encodedUri"
     Write-Verbose "[$functionName] Method: $method"
     #endregion
-    try
-    {
+    try {
         $response = Invoke-RestMethod @restParams
         Write-Verbose "[$functionName] NextLink: $($response.'@odata.nextLink')"
         Write-Verbose "[$functionName] Response count: $($response.value.count)"
-        if ($response.'@odata.nextLink')
-        {
+        if ($response.'@odata.nextLink') {
             Write-Verbose "[$functionName] NextLink found. Fetching additional pages."
             # Initialize an array to hold all items
             $allItems = @()
             $allItems += $response.value
             $nextLink = $response.'@odata.nextLink'
-            while ($nextLink)
-            {
+            while ($nextLink) {
                 $nextGroup = Invoke-RestMethod -Method $method -Uri $nextLink -Headers $defaultHeaders -UseBasicParsing
                 Write-Verbose "[$functionName] Fetched next page with $($nextGroup.value.Count) items."
-                if ($nextGroup.value)
-                {
+                if ($nextGroup.value) {
                     Write-Verbose "[$functionName] Adding items from next page to the collection."
                     $allItems += $nextGroup.value
                 }
@@ -479,33 +416,27 @@ function Invoke-GraphAPI()
             $response.value = $allItems
             Write-Verbose "[$functionName] All items collected. Total count: $($Response.value.Count)"
         }
-        else
-        {
+        else {
             Write-Verbose "[$functionName] No nextLink found. Single page response received."
         }
         Write-Verbose "[$functionName] The call was successful."
-        if ($response.count)
-        {
+        if ($response.count) {
             Write-Verbose "[$functionName] Total count of items: $($response.count)."
         }
-        if ($response.value.Count)
-        {
+        if ($response.value.Count) {
             Write-Verbose "[$functionName] Number of items returned: $($response.value.Count)."
         }
-        if ($PSVersionTable.PSVersion.Major -ge 7)
-        {
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
             Write-Verbose "[$functionName] Status code: $statusCode"
         }
     }
-    catch
-    {
+    catch {
         # Capture as much diagnostic information as possible about the failure
         Write-Verbose "[$functionName] An error occurred while calling the Graph API. Capturing diagnostics."
         Write-Verbose "[$functionName] Exception type: $($PSItem.Exception.GetType().FullName)"
         # Walk inner exceptions (if any)
         $inner = $PSItem.Exception.InnerException
-        while ($null -ne $inner)
-        {
+        while ($null -ne $inner) {
             Write-Verbose "[$functionName] InnerException type: $($inner.GetType().FullName)"
             Write-Verbose "[$functionName] InnerException message: $($inner.Message)"
             $inner = $inner.InnerException
@@ -515,23 +446,19 @@ function Invoke-GraphAPI()
         $statusMessage = $PSItem.Exception.Message
         $statusCodeMessage = $null
         # Try to extract status code from exception when available
-        if ($null -eq $PSItem.Exception.statusCode)
-        {
+        if ($null -eq $PSItem.Exception.statusCode) {
             # Fallback: try to parse from exception message
             $statusCode = [regex]::Match($PSItem.Exception.Message, '\d+').Value
             Write-Verbose "[$functionName] Status code (parsed): $statusCode"
             $statusCodeMessage = $PSItem.Exception | Out-String
             Write-Verbose "[$functionName] Status code message: $statusCodeMessage"
         }
-        else
-        {
+        else {
             # PowerShell 5.1/7 HttpStatusCode
-            try
-            {
+            try {
                 $statusCode = $PSItem.Exception.statuscode.value__
             }
-            catch
-            {
+            catch {
                 $statusCode = [int]$PSItem.Exception.statuscode
             }
             $statusCodeMessage = $PSItem.Exception.statuscode
@@ -548,237 +475,182 @@ function Invoke-GraphAPI()
         $diagHeader = $null
         $responseHeaders = @{}
         $resp = $PSItem.Exception.Response
-        if ($null -ne $resp)
-        {
+        if ($null -ne $resp) {
             # Status description when available
-            try
-            {
+            try {
                 $statusDescription = $resp.StatusDescription
             }
-            catch
-            {
+            catch {
                 $statusDescription = $null
             }
 
             # Headers (handle both WebHeaderCollection and IDictionary-like)
-            try
-            {
-                if ($resp.Headers -and $resp.Headers -is [System.Net.WebHeaderCollection])
-                {
-                    foreach ($key in $resp.Headers.AllKeys)
-                    {
+            try {
+                if ($resp.Headers -and $resp.Headers -is [System.Net.WebHeaderCollection]) {
+                    foreach ($key in $resp.Headers.AllKeys) {
                         $responseHeaders[$key] = $resp.Headers[$key]
                     }
                 }
-                elseif ($resp.Headers)
-                {
-                    foreach ($kvp in $resp.Headers.GetEnumerator())
-                    {
+                elseif ($resp.Headers) {
+                    foreach ($kvp in $resp.Headers.GetEnumerator()) {
                         $responseHeaders[$kvp.Key] = ($kvp.Value -join ',')
                     }
                 }
             }
-            catch
-            {
+            catch {
                 Write-Verbose "[$functionName] Failed to enumerate response headers: $($_.Exception.Message)"
                 & $logWarn "[$functionName] Failed to enumerate response headers: $($_.Exception.Message)"
             }
 
             # Common Graph headers
-            if ($responseHeaders.ContainsKey('request-id'))
-            {
+            if ($responseHeaders.ContainsKey('request-id')) {
                 $requestId = $responseHeaders['request-id']
             }
-            if ($responseHeaders.ContainsKey('client-request-id'))
-            {
+            if ($responseHeaders.ContainsKey('client-request-id')) {
                 $clientRequestId = $responseHeaders['client-request-id']
             }
-            if ($responseHeaders.ContainsKey('x-ms-ags-diagnostic'))
-            {
+            if ($responseHeaders.ContainsKey('x-ms-ags-diagnostic')) {
                 $diagHeader = $responseHeaders['x-ms-ags-diagnostic']
             }
-            if ($responseHeaders.ContainsKey('Date'))
-            {
+            if ($responseHeaders.ContainsKey('Date')) {
                 $serverDate = $responseHeaders['Date']
             }
-            if ($responseHeaders.ContainsKey('Retry-After'))
-            {
+            if ($responseHeaders.ContainsKey('Retry-After')) {
                 $retryAfter = $responseHeaders['Retry-After']
             }
             # Body: handle HttpWebResponse stream and PS7 ErrorDetails fallbacks
-            try
-            {
-                if ($resp -is [System.Net.HttpWebResponse])
-                {
+            try {
+                if ($resp -is [System.Net.HttpWebResponse]) {
                     $errorResponse = $resp.GetResponseStream()
-                    if ($errorResponse)
-                    {
+                    if ($errorResponse) {
                         $streamReader = New-Object System.IO.StreamReader($errorResponse)
                         $responseBodyRaw = $streamReader.ReadToEnd()
                         $streamReader.Close()
                     }
                 }
             }
-            catch
-            {
+            catch {
                 Write-Verbose "[$functionName] Failed to read response stream: $($_.Exception.Message)"
             }
         }
         # Additional fallbacks commonly present in PS7
-        if (-not $responseBodyRaw)
-        {
-            try
-            {
-                if ($PSItem.ErrorDetails -and $PSItem.ErrorDetails.Message)
-                {
+        if (-not $responseBodyRaw) {
+            try {
+                if ($PSItem.ErrorDetails -and $PSItem.ErrorDetails.Message) {
                     $responseBodyRaw = $PSItem.ErrorDetails.Message
                 }
             }
-            catch
-            {
+            catch {
                 Write-Verbose "[$functionName] Failed to retrieve error details message: $($_.Exception.Message)"
             }
         }
-        if (-not $responseBodyRaw)
-        {
-            try
-            {
-                if ($PSItem.Exception.Response -and $PSItem.Exception.Response.Content)
-                {
+        if (-not $responseBodyRaw) {
+            try {
+                if ($PSItem.Exception.Response -and $PSItem.Exception.Response.Content) {
                     $responseBodyRaw = [string]$PSItem.Exception.Response.Content
                 }
             }
-            catch
-            {
+            catch {
                 Write-Verbose "[$functionName] Failed to retrieve response content: $($_.Exception.Message)"
             }
         }
 
         # Parse JSON body if it looks like JSON
-        if ($responseBodyRaw)
-        {
+        if ($responseBodyRaw) {
             Write-Verbose "[$functionName] Raw server response captured (truncated for display if large)."
             Write-Verbose "[$functionName] Server Response (raw): $responseBodyRaw"
-            try
-            {
+            try {
                 $responseJson = $responseBodyRaw | ConvertFrom-Json -ErrorAction Stop
             }
-            catch
-            {
+            catch {
                 $responseJson = $null
             }
         }
         # Extract Graph error fields when available
-        if ($null -ne $responseJson -and $responseJson.error)
-        {
+        if ($null -ne $responseJson -and $responseJson.error) {
             $graphError = $responseJson.error
             $graphCode = $graphError.code
             $graphMessage = $graphError.message
             Write-Verbose "[$functionName] Graph error code: $graphCode"
             Write-Verbose "[$functionName] Graph error message: $graphMessage"
-            if ($graphError.innerError)
-            {
+            if ($graphError.innerError) {
                 $innerErr = $graphError.innerError
                 # Newer Graph may use camelCase innerError fields; older uses innererror
-                try
-                {
-                    if (-not $requestId -and $innerErr.'request-id')
-                    {
+                try {
+                    if (-not $requestId -and $innerErr.'request-id') {
                         $requestId = $innerErr.'request-id'
                     }
                 }
-                catch
-                {
+                catch {
                     Write-Verbose "[$functionName] Failed to retrieve inner error request-id: $($_.Exception.Message)"
                 }
-                try
-                {
-                    if (-not $clientRequestId -and $innerErr.'client-request-id')
-                    {
+                try {
+                    if (-not $clientRequestId -and $innerErr.'client-request-id') {
                         $clientRequestId = $innerErr.'client-request-id'
                     }
                 }
-                catch
-                {
+                catch {
                     Write-Verbose "[$functionName] Failed to retrieve inner error client-request-id: $($_.Exception.Message)"
                 }
-                try
-                {
-                    if (-not $serverDate -and $innerErr.date)
-                    {
+                try {
+                    if (-not $serverDate -and $innerErr.date) {
                         $serverDate = $innerErr.date
                     }
                 }
-                catch
-                {
+                catch {
                     Write-Verbose "[$functionName] Failed to retrieve inner error date: $($_.Exception.Message)"
                 }
                 Write-Verbose "[$functionName] Graph innerError: request-id=$requestId client-request-id=$clientRequestId date=$serverDate"
                 # Some APIs include nested innererror with additional code/message
-                if ($innerErr.innererror)
-                {
+                if ($innerErr.innererror) {
                     Write-Verbose "[$functionName] Graph nested innererror: $($innerErr.innererror | ConvertTo-Json -Depth 5)"
                 }
             }
         }
 
         # Summarize headers and identifiers (avoid logging Authorization)
-        if ($responseHeaders.Count -gt 0)
-        {
+        if ($responseHeaders.Count -gt 0) {
             Write-Verbose "[$functionName] Response headers:"
-            foreach ($k in $responseHeaders.Keys | Sort-Object)
-            {
-                if ($k -ne 'Authorization')
-                {
+            foreach ($k in $responseHeaders.Keys | Sort-Object) {
+                if ($k -ne 'Authorization') {
                     Write-Verbose "[$functionName]   $($k): $($responseHeaders[$k])"
                 }
             }
         }
-        if ($requestId)
-        {
+        if ($requestId) {
             Write-Verbose "[$functionName] Request-Id: $requestId"
         }
-        if ($clientRequestId)
-        {
+        if ($clientRequestId) {
             Write-Verbose "[$functionName] Client-Request-Id: $clientRequestId"
         }
-        if ($diagHeader)
-        {
+        if ($diagHeader) {
             Write-Verbose "[$functionName] x-ms-ags-diagnostic: $diagHeader"
         }
-        if ($serverDate)
-        {
+        if ($serverDate) {
             Write-Verbose "[$functionName] Server Date: $serverDate"
         }
-        if ($retryAfter)
-        {
+        if ($retryAfter) {
             Write-Verbose "[$functionName] Retry-After: $retryAfter"
         }
-        try
-        {
+        try {
             # Build a consolidated diagnostic message
             $headersText = ''
-            if ($responseHeaders.Count -gt 0)
-            {
+            if ($responseHeaders.Count -gt 0) {
                 $headersText = ($responseHeaders.GetEnumerator() | Where-Object { $_.Key -ne 'Authorization' } | Sort-Object Key | ForEach-Object { "${($_.Key)}: ${($_.Value)}" }) -join [Environment]::NewLine
             }
             $graphInnerDump = $null
-            if ($responseJson -and $responseJson.error -and $responseJson.error.innerError)
-            {
-                try
-                {
+            if ($responseJson -and $responseJson.error -and $responseJson.error.innerError) {
+                try {
                     $graphInnerDump = ($responseJson.error.innerError | ConvertTo-Json -Depth 8)
                 }
-                catch
-                {
+                catch {
                     $graphInnerDump = ($responseJson.error.innerError | Out-String)
                 }
             }
             $rawBodyForLog = $responseBodyRaw
             # Optionally truncate extremely large bodies to keep logs manageable
             $maxBody = 50000
-            if ($rawBodyForLog -and $rawBodyForLog.Length -gt $maxBody)
-            {
+            if ($rawBodyForLog -and $rawBodyForLog.Length -gt $maxBody) {
                 $rawBodyForLog = $rawBodyForLog.Substring(0, $maxBody) + "... (truncated; total length=$($responseBodyRaw.Length))"
             }
             $logMessage = @"
@@ -806,58 +678,45 @@ $rawBodyForLog
 
             Write-Verbose "[$functionName] (fallback) $logMessage"
         }
-        catch
-        {
+        catch {
             Write-Verbose "[$functionName] Failed to write diagnostics: $($_.Exception.Message)"
         }
 
         # Preserve existing switch logic for user-friendly messages
         $statusMessage = $statusMessage
-        switch ($statusCode)
-        {
-            400
-            {
+        switch ($statusCode) {
+            400 {
                 Write-Verbose "[$functionName] Bad request. Please check the resource name."
             }
-            401
-            {
+            401 {
                 Write-Verbose "[$functionName] Unauthorized. Please check your access token."
             }
-            403
-            {
+            403 {
                 Write-Verbose "[$functionName] Forbidden. You do not have permission to access this resource."
             }
-            404
-            {
+            404 {
                 Write-Verbose "[$functionName] Not found. The resource does not exist."
             }
-            default
-            {
+            default {
                 Write-Verbose "[$functionName] An unknown error occurred. Please check the error message below."
                 Write-Verbose "[$functionName] Error: $statusMessage"
-                if ($statusCode)
-                {
+                if ($statusCode) {
                     Write-Verbose "[$functionName] Status code: $statusCode"
                 }
-                if ($statusDescription)
-                {
+                if ($statusDescription) {
                     Write-Verbose "[$functionName] Status description: $statusDescription"
                 }
-                if ($statusCodeMessage)
-                {
+                if ($statusCodeMessage) {
                     Write-Verbose "[$functionName] $statusCode indicates $statusCodeMessage"
                 }
                 Write-Verbose "[$functionName] Status message: $statusMessage"
-                if ($requestId)
-                {
+                if ($requestId) {
                     Write-Verbose "[$functionName] Request-Id: $requestId"
                 }
-                if ($clientRequestId)
-                {
+                if ($clientRequestId) {
                     Write-Verbose "[$functionName] Client-Request-Id: $clientRequestId"
                 }
-                if ($retryAfter)
-                {
+                if ($retryAfter) {
                     Write-Verbose "[$functionName] Retry-After: $retryAfter"
                 }
                 Write-Verbose "[$functionName] The full error message follows below:"
@@ -868,12 +727,10 @@ $rawBodyForLog
         }
         Write-Verbose "[$functionName] Failed to call the Graph API: $_"
         Write-Verbose "[$functionName] The status code is $statusCode"
-        if ($statusCodeMessage)
-        {
+        if ($statusCodeMessage) {
             Write-Verbose "[$functionName] $statusCode indicates $statusCodeMessage"
         }
-        if ($statusDescription)
-        {
+        if ($statusDescription) {
             Write-Verbose "[$functionName] Status description: $statusDescription"
         }
         Write-Verbose "[$functionName] Status message: $statusMessage"
@@ -882,8 +739,7 @@ $rawBodyForLog
         Write-Verbose "[$functionName] Error: $($_)"
         Write-Verbose "[$functionName] Exception message: $($PSItem.Exception.Message)"
         Write-Verbose "[$functionName] Exception response: $($PSItem.Exception.Response)"
-        if ($responseBodyRaw)
-        {
+        if ($responseBodyRaw) {
             Write-Verbose "[$functionName] Server Response (raw): $responseBodyRaw"
         }
         return $statusCode
@@ -894,8 +750,7 @@ $rawBodyForLog
     return $response
 }
 
-function Get-GraphAccessToken()
-{
+function Get-GraphAccessToken {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
@@ -909,8 +764,7 @@ function Get-GraphAccessToken()
     )
 
     #region helper functions
-    function Get-TokenExpiryTime()
-    {
+    function Get-TokenExpiryTime() {
         [CmdletBinding()]
         param(
             [object]$accessTokenObject
@@ -919,8 +773,7 @@ function Get-GraphAccessToken()
         Write-Verbose "[$functionName] Retrieving token expiry time"
 
         # Check if AbsoluteExpiryTime property exists and has a value
-        if ($accessTokenObject.PSObject.Properties['AbsoluteExpiryTime'] -and $accessTokenObject.AbsoluteExpiryTime)
-        {
+        if ($accessTokenObject.PSObject.Properties['AbsoluteExpiryTime'] -and $accessTokenObject.AbsoluteExpiryTime) {
             Write-Verbose "[$functionName] Token expires at: $($accessTokenObject.AbsoluteExpiryTime)"
             return $accessTokenObject.AbsoluteExpiryTime
         }
@@ -929,8 +782,7 @@ function Get-GraphAccessToken()
         return [datetime]::MinValue
     }
 
-    function Save-TokenToCache()
-    {
+    function Save-TokenToCache() {
         [CmdletBinding()        ]
         param(
             [object]$tokenResponse
@@ -939,8 +791,7 @@ function Get-GraphAccessToken()
         Write-Verbose "[$functionName] Saving access token to memory cache"
 
         # Initialize global memory cache if it doesn't exist
-        if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue))
-        {
+        if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue)) {
             Write-Verbose "[$functionName] Initializing global memory cache"
             New-Variable -Name 'MemoryCache' -Scope Global -Value @{} -Force
         }
@@ -964,8 +815,7 @@ function Get-GraphAccessToken()
         Write-Verbose "[$functionName] Token successfully saved to memory cache"
     }
 
-    function New-JwtClientAssertion()
-    {
+    function New-JwtClientAssertion() {
         [CmdletBinding()]
         param(
             [Parameter(Mandatory = $true)]
@@ -1010,8 +860,7 @@ function Get-GraphAccessToken()
         Write-Verbose "[$functionName] Signing JWT with certificate private key"
         $privateKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($Certificate)
 
-        if (-not $privateKey)
-        {
+        if (-not $privateKey) {
             throw "Failed to access certificate private key"
         }
 
@@ -1022,8 +871,7 @@ function Get-GraphAccessToken()
         return "$jwtToSign.$jwtSignatureEncoded"
     }
 
-    function Invoke-CertificateAuthentication()
-    {
+    function Invoke-CertificateAuthentication() {
         [CmdletBinding()]
         param(
             [Parameter(Mandatory = $true)]
@@ -1041,24 +889,21 @@ function Get-GraphAccessToken()
 
         # Get certificate from store
         $certificate = Get-ChildItem -Path Cert:\CurrentUser\My, Cert:\LocalMachine\My -Recurse |
-            Where-Object { $_.Thumbprint -eq $CertificateThumbprint } |
-            Select-Object -First 1
+        Where-Object { $_.Thumbprint -eq $CertificateThumbprint } |
+        Select-Object -First 1
 
-        if (-not $certificate)
-        {
+        if (-not $certificate) {
             throw "Certificate with thumbprint $CertificateThumbprint not found in certificate stores"
         }
 
         Write-Verbose "[$functionName] Certificate found: Subject=$($certificate.Subject), NotAfter=$($certificate.NotAfter)"
 
         # Validate certificate
-        if ($certificate.NotAfter -lt (Get-Date))
-        {
+        if ($certificate.NotAfter -lt (Get-Date)) {
             throw "Certificate has expired on $($certificate.NotAfter)"
         }
 
-        if (-not $certificate.HasPrivateKey)
-        {
+        if (-not $certificate.HasPrivateKey) {
             throw "Certificate does not have a private key"
         }
 
@@ -1084,8 +929,7 @@ function Get-GraphAccessToken()
         return $tokenResponse
     }
 
-    function Invoke-ClientSecretAuthentication()
-    {
+    function Invoke-ClientSecretAuthentication() {
         [CmdletBinding()]
         param(
             [Parameter(Mandatory = $true)]
@@ -1118,8 +962,7 @@ function Get-GraphAccessToken()
         return $tokenResponse
     }
 
-    function Write-AuthenticationError()
-    {
+    function Write-AuthenticationError() {
         [CmdletBinding()]
         param(
             [Parameter(Mandatory = $true)]
@@ -1132,13 +975,11 @@ function Get-GraphAccessToken()
 
         Write-Verbose "[$FunctionName] $AuthMethod authentication failed: $Exception"
 
-        if ($Exception.Exception.Response)
-        {
+        if ($Exception.Exception.Response) {
             $statusCode = $Exception.Exception.Response.StatusCode
             Write-Verbose "[$FunctionName] Status code: $statusCode"
 
-            try
-            {
+            try {
                 $errorResponse = $Exception.Exception.Response.GetResponseStream()
                 $streamReader = New-Object System.IO.StreamReader($errorResponse)
                 $errorMessage = $streamReader.ReadToEnd()
@@ -1148,8 +989,7 @@ function Get-GraphAccessToken()
                 Write-Verbose "[$FunctionName] Error code: $($errorJson.error)"
                 Write-Verbose "[$FunctionName] Error description: $($errorJson.error_description)"
             }
-            catch
-            {
+            catch {
                 Write-Verbose "[$FunctionName] Could not parse error response"
             }
         }
@@ -1160,38 +1000,32 @@ function Get-GraphAccessToken()
     $renewalLeadTimeInMinutes = 5
     $timeBuffer = (Get-Date).AddMinutes($renewalLeadTimeInMinutes)
     Write-Verbose "[$functionName] Token renewal buffer time: $timeBuffer"
-    if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue))
-    {
+    if (-not (Get-Variable -Name 'MemoryCache' -Scope Global -ErrorAction SilentlyContinue)) {
         Write-Verbose "[$functionName] Initializing global memory cache"
         New-Variable -Name 'MemoryCache' -Scope Global -Value @{} -Force
     }
 
-    if ($Global:MemoryCache.ContainsKey('accessToken'))
-    {
+    if ($Global:MemoryCache.ContainsKey('accessToken')) {
         Write-Verbose "[$functionName] Found token in memory cache"
         $tokenObject = $Global:MemoryCache['accessToken']
         $absoluteExpiryTime = Get-TokenExpiryTime -accessTokenObject $tokenObject
         Write-Verbose "[$functionName] Token expiry time: $absoluteExpiryTime"
-        if ($absoluteExpiryTime -gt $timeBuffer)
-        {
+        if ($absoluteExpiryTime -gt $timeBuffer) {
             Write-Verbose "[$functionName] Access token is valid until $absoluteExpiryTime"
             Write-Host "Valid Token retrieved from cache." -ForegroundColor Green
             [console]::beep(200, 200)
             return $tokenObject.access_token
         }
-        else
-        {
+        else {
             Write-Verbose "[$functionName] Cached token has expired or expires soon, acquiring new token"
         }
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] No token found in memory cache"
     }
 
     # Validate that we have at least one authentication method
-    if (-not $clientSecret -and -not $certificateThumbprint)
-    {
+    if (-not $clientSecret -and -not $certificateThumbprint) {
         $errorMsg = "Either clientSecret or certificateThumbprint must be provided"
         Write-Verbose "[$functionName] $errorMsg"
         return $null
@@ -1206,19 +1040,16 @@ function Get-GraphAccessToken()
     $hasCertificate = -not [string]::IsNullOrWhiteSpace($certificateThumbprint)
     $hasClientSecret = -not [string]::IsNullOrWhiteSpace($clientSecret)
 
-    if ($hasCertificate -and $hasClientSecret)
-    {
+    if ($hasCertificate -and $hasClientSecret) {
         Write-Verbose "[$functionName] Both certificate and client secret provided - will try certificate first with fallback to secret"
         $tryBothWithFallback = $true
         $useCertificate = $true
     }
-    elseif ($hasCertificate)
-    {
+    elseif ($hasCertificate) {
         Write-Verbose "[$functionName] Using certificate-based authentication (certificate-only mode)"
         $useCertificate = $true
     }
-    else
-    {
+    else {
         Write-Verbose "[$functionName] Using client secret authentication"
         $useClientSecret = $true
     }
@@ -1228,42 +1059,34 @@ function Get-GraphAccessToken()
     Write-Verbose "[$functionName] Token endpoint: $tokenEndpoint"
 
     # Attempt certificate authentication
-    if ($useCertificate)
-    {
-        try
-        {
+    if ($useCertificate) {
+        try {
             $tokenResponse = Invoke-CertificateAuthentication -CertificateThumbprint $certificateThumbprint -ClientId $clientId -TokenEndpoint $tokenEndpoint -Scope $scope
             Save-TokenToCache -tokenResponse $tokenResponse
             return $tokenResponse.access_token
         }
-        catch
-        {
+        catch {
             Write-AuthenticationError -FunctionName $functionName -AuthMethod "Certificate" -Exception $_
 
-            if ($tryBothWithFallback)
-            {
+            if ($tryBothWithFallback) {
                 Write-Warning "[$functionName] Certificate authentication failed - falling back to client secret"
                 $useCertificate = $false
                 $useClientSecret = $true
             }
-            else
-            {
+            else {
                 return $null
             }
         }
     }
 
     # Attempt client secret authentication
-    if ($useClientSecret)
-    {
-        try
-        {
+    if ($useClientSecret) {
+        try {
             $tokenResponse = Invoke-ClientSecretAuthentication -ClientId $clientId -ClientSecret $clientSecret -TokenEndpoint $tokenEndpoint -Scope $scope
             Save-TokenToCache -tokenResponse $tokenResponse
             return $tokenResponse.access_token
         }
-        catch
-        {
+        catch {
             Write-AuthenticationError -FunctionName $functionName -AuthMethod "Client secret" -Exception $_
             return $null
         }
@@ -1273,60 +1096,54 @@ function Get-GraphAccessToken()
 
 #region check configuration
 $configPath = Join-Path -Path $PSScriptRoot -ChildPath $configFile
-if (-not (Test-Path -Path $configPath))
-{
+if (-not (Test-Path -Path $configPath)) {
     Write-Host "Config file not found at $configPath. Using default values." -ForegroundColor Red
     $config = @{}
 }
-else
-{
+else {
     Write-Verbose "Config file found at $configPath. Loading configuration."
     $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
 }
 $appListPath = Join-Path -Path $PSScriptRoot -ChildPath $Applist
-if (-not (Test-Path -Path $appListPath))
-{
+if (-not (Test-Path -Path $appListPath) -and $UpdateLogos) {
     Write-Host "App list file not found at $appListPath. Exitting script." -ForegroundColor Red
     exit 1
 }
 #endregion check configuration
 
 #region Define variables
-$tenantId = if ($config.tenantId)
-{
+$tenantId = if ($config.tenantId) {
     $config.tenantId
 }
-else
-{
+else {
     $null
 }
-$clientId = if ($config.appId)
-{
+$clientId = if ($config.appId) {
     $config.appId
 }
-else
-{
+else {
     $null
 }
-$clientSecret = if ($config.AppSecret)
-{
+$clientSecret = if ($config.AppSecret) {
     $config.AppSecret
 }
-else
-{
+else {
     $null
 }
-$certificateThumbprint = if ($config.thumbprint)
-{
+$certificateThumbprint = if ($config.thumbprint) {
     $config.thumbprint
 }
-else
-{
+else {
     $null
 }
 $managedAppUri = "deviceAppManagement/mobileApps"
 $accessToken = Get-GraphAccessToken -tenantId $tenantId -clientId $clientId -clientSecret $clientSecret -certificateThumbprint $certificateThumbprint
-$CSVAppList = Import-Csv -Path $appListPath
+$CSVAppList = if ($UpdateLogos) {
+    Import-Csv -Path $appListPath
+}
+else {
+    @()
+}
 $appTypes = @(
     @{
         AppType     = "Win32 App"
@@ -1364,6 +1181,31 @@ $appTypes = @(
         Description = "Web applications accessed via a URL and optionally integrated with Azure AD for single sign-on"
     },
     @{
+        AppType     = "Microsoft Edge App"
+        ODataType   = "#microsoft.graph.windowsMicrosoftEdgeApp"
+        Description = "Microsoft Edge browser app for Windows"
+    },
+    @{
+        AppType     = "Windows Web App"
+        ODataType   = "#microsoft.graph.windowsWebApp"
+        Description = "Web applications specifically designed for Windows"
+    },
+    @{
+        AppType     = "Windows Phone XAP App"
+        ODataType   = "#microsoft.graph.windowsPhoneXAP"
+        Description = "Legacy Windows Phone apps packaged as `.xap` files"
+    },
+    @{
+        AppType     = "Windows Phone 8.1 Store App"
+        ODataType   = "#microsoft.graph.windowsPhone81StoreApp"
+        Description = "Windows Phone 8.1 apps available in the Store"
+    },
+    @{
+        AppType     = "Windows Phone 8.1 AppX"
+        ODataType   = "#microsoft.graph.windowsPhone81AppX"
+        Description = "Windows Phone 8.1 apps packaged as `.appx` files"
+    },
+    @{
         AppType     = "Windows store app"
         ODataType   = "#microsoft.graph.windowsStoreApp"
         Description = "Apps available in the Microsoft Store for Business and Education that can be deployed to devices"
@@ -1378,10 +1220,8 @@ $appArray = @()
 #endregion Define variables
 
 $apps = Invoke-GraphAPI -ResourcePath $managedAppUri -accessToken $AccessToken
-foreach ($app in $apps.value)
-{
-    if ($app.'@odata.type' -in $appTypes.ODataType)
-    {
+foreach ($app in $apps.value) {
+    if ($app.'@odata.type' -in $appTypes.ODataType) {
         $matchedType = $appTypes | Where-Object { $_.'ODataType' -eq $app.'@odata.type' }
         $appObject = [PSCustomObject]@{
             displayName = $app.displayName
@@ -1394,10 +1234,15 @@ foreach ($app in $apps.value)
 }
 Write-Host "Processed $($appArray.Count) apps..." -ForegroundColor Green
 
-if ($appArray.Count -eq 0)
-{
+if ($appArray.Count -eq 0) {
     Write-Host "No eligible apps found. Exiting script." -ForegroundColor Red
     exit 1
+}
+if (-not $UpdateLogos) {
+    $CSVAppList = $appArray | Select-Object displayName, type, description, id
+    $CSVAppList | Export-Csv -Path $Applist -NoTypeInformation -Force
+    Write-Host "Exported $($CSVAppList.Count) apps to $Applist" -ForegroundColor Green
+    exit 0
 }
 
 # Match apps from appArray with logos from CSV
@@ -1408,46 +1253,37 @@ $noMatchApps = @()
 $logoNotFoundApps = @()
 
 Write-Host "Matching apps with logos from CSV..." -ForegroundColor Cyan
-foreach ($csvEntry in $CSVAppList)
-{
+foreach ($csvEntry in $CSVAppList) {
     $matchedApp = $appArray | Where-Object { $_.displayName -ieq $csvEntry.AppName }
-    if (-not $matchedApp)
-    {
+    if (-not $matchedApp) {
         $noMatchApps += $csvEntry.AppName
         Write-Verbose "No matching app found in Intune for CSV entry: '$($csvEntry.AppName)'"
         continue
     }
 
     $logoFilePath = Join-Path -Path $PSScriptRoot -ChildPath $csvEntry.Logo
-    if (-not (Test-Path -Path $logoFilePath))
-    {
+    if (-not (Test-Path -Path $logoFilePath)) {
         $logoNotFoundApps += $csvEntry.AppName
         Write-Host "  [WARNING] Logo file not found for '$($csvEntry.AppName)': $logoFilePath" -ForegroundColor Yellow
         continue
     }
 
     $extension = [System.IO.Path]::GetExtension($logoFilePath).ToLower()
-    $mimeType = switch ($extension)
-    {
-        '.png'
-        {
-            'image/png' 
+    $mimeType = switch ($extension) {
+        '.png' {
+            'image/png'
         }
-        '.jpg'
-        {
-            'image/jpeg' 
+        '.jpg' {
+            'image/jpeg'
         }
-        '.jpeg'
-        {
-            'image/jpeg' 
+        '.jpeg' {
+            'image/jpeg'
         }
-        '.gif'
-        {
-            'image/gif' 
+        '.gif' {
+            'image/gif'
         }
-        default
-        {
-            'image/png' 
+        default {
+            'image/png'
         }
     }
 
@@ -1469,8 +1305,7 @@ foreach ($csvEntry in $CSVAppList)
 
 Write-Host "Found $($updatePaths.Count) app(s) with matching logos to update." -ForegroundColor Cyan
 
-if ($updatePaths.Count -eq 0)
-{
+if ($updatePaths.Count -eq 0) {
     Write-Host "No apps could be matched to logo files. Exiting." -ForegroundColor Red
     exit 1
 }
@@ -1483,108 +1318,84 @@ $batchResponse = Invoke-GraphAPI -ResourcePath $updatePaths -accessToken $Access
 $successCount = 0
 $failedApps = @()
 
-if ($batchResponse -is [hashtable] -and $batchResponse.batchProcessed)
-{
+if ($batchResponse -is [hashtable] -and $batchResponse.batchProcessed) {
     # Batch path: response IDs are 1-based and globally unique across sub-batches
-    foreach ($result in $batchResponse.value)
-    {
+    foreach ($result in $batchResponse.value) {
         $appIndex = [int]$result.id - 1
-        $appName = if ($appIndex -ge 0 -and $appIndex -lt $matchedAppNames.Count)
-        {
+        $appName = if ($appIndex -ge 0 -and $appIndex -lt $matchedAppNames.Count) {
             $matchedAppNames[$appIndex]
         }
-        else
-        {
+        else {
             "Unknown (id=$($result.id))"
         }
-        if ($result.status -ge 200 -and $result.status -lt 300)
-        {
+        if ($result.status -ge 200 -and $result.status -lt 300) {
             $successCount++
         }
-        else
-        {
-            $errorMsg = if ($result.body -and $result.body.error)
-            {
-                $result.body.error.message 
+        else {
+            $errorMsg = if ($result.body -and $result.body.error) {
+                $result.body.error.message
             }
-            else
-            {
-                "HTTP $($result.status)" 
+            else {
+                "HTTP $($result.status)"
             }
             $failedApps += [PSCustomObject]@{ AppName = $appName; Error = $errorMsg }
         }
     }
 }
-elseif ($updatePaths.Count -eq 1)
-{
+elseif ($updatePaths.Count -eq 1) {
     # Single-request path (Invoke-GraphAPI strips single-item arrays)
-    if ($batchResponse -is [int])
-    {
+    if ($batchResponse -is [int]) {
         $failedApps += [PSCustomObject]@{ AppName = $matchedAppNames[0]; Error = "HTTP $batchResponse" }
     }
-    else
-    {
+    else {
         # $null (204 No Content) or PSCustomObject both indicate success
         $successCount++
     }
 }
-else
-{
+else {
     Write-Host "Unexpected response received from batch update." -ForegroundColor Red
 }
 
 # Print summary
 Write-Host ""
 Write-Host "===== Update Summary =====" -ForegroundColor Cyan
-Write-Host "  Successfully updated : $successCount" -ForegroundColor $(if ($successCount -gt 0)
-    {
-        'Green' 
+Write-Host "  Successfully updated : $successCount" -ForegroundColor $(if ($successCount -gt 0) {
+        'Green'
     }
-    else
-    {
-        'Yellow' 
+    else {
+        'Yellow'
     })
-Write-Host "  Failed to update     : $($failedApps.Count)" -ForegroundColor $(if ($failedApps.Count -gt 0)
-    {
-        'Red' 
+Write-Host "  Failed to update     : $($failedApps.Count)" -ForegroundColor $(if ($failedApps.Count -gt 0) {
+        'Red'
     }
-    else
-    {
-        'Green' 
+    else {
+        'Green'
     })
-if ($noMatchApps.Count -gt 0)
-{
+if ($noMatchApps.Count -gt 0) {
     Write-Host "  Not found in Intune  : $($noMatchApps.Count)" -ForegroundColor Yellow
 }
-if ($logoNotFoundApps.Count -gt 0)
-{
+if ($logoNotFoundApps.Count -gt 0) {
     Write-Host "  Logo file missing    : $($logoNotFoundApps.Count)" -ForegroundColor Yellow
 }
 
-if ($failedApps.Count -gt 0)
-{
+if ($failedApps.Count -gt 0) {
     Write-Host ""
     Write-Host "Failed apps:" -ForegroundColor Red
-    foreach ($failedApp in $failedApps)
-    {
+    foreach ($failedApp in $failedApps) {
         Write-Host "  - $($failedApp.AppName): $($failedApp.Error)" -ForegroundColor Red
     }
 }
-if ($noMatchApps.Count -gt 0)
-{
+if ($noMatchApps.Count -gt 0) {
     Write-Host ""
     Write-Host "Apps in CSV not found in Intune:" -ForegroundColor Yellow
-    foreach ($appName in $noMatchApps)
-    {
+    foreach ($appName in $noMatchApps) {
         Write-Host "  - $appName" -ForegroundColor Yellow
     }
 }
-if ($logoNotFoundApps.Count -gt 0)
-{
+if ($logoNotFoundApps.Count -gt 0) {
     Write-Host ""
     Write-Host "Apps skipped due to missing logo files:" -ForegroundColor Yellow
-    foreach ($appName in $logoNotFoundApps)
-    {
+    foreach ($appName in $logoNotFoundApps) {
         Write-Host "  - $appName" -ForegroundColor Yellow
     }
 }
